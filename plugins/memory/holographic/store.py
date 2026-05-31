@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS facts (
     helpful_count   INTEGER DEFAULT 0,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    hrr_vector      BLOB
+    hrr_vector      BLOB,
+    embedding       BLOB
 );
 
 CREATE TABLE IF NOT EXISTS entities (
@@ -137,6 +138,9 @@ class MemoryStore:
         columns = {row[1] for row in self._conn.execute("PRAGMA table_info(facts)").fetchall()}
         if "hrr_vector" not in columns:
             self._conn.execute("ALTER TABLE facts ADD COLUMN hrr_vector BLOB")
+        # Migrate: add dense-embedding column if missing (Hybrid-Full semantic signal)
+        if "embedding" not in columns:
+            self._conn.execute("ALTER TABLE facts ADD COLUMN embedding BLOB")
         self._conn.commit()
 
     # ------------------------------------------------------------------
@@ -184,6 +188,8 @@ class MemoryStore:
 
             # Compute HRR vector after entity linking
             self._compute_hrr_vector(fact_id, content)
+            # Compute dense embedding (Hybrid-Full semantic signal; no-op if deps absent)
+            self._compute_embedding(fact_id, content)
             self._rebuild_bank(category)
 
             return fact_id
@@ -295,6 +301,7 @@ class MemoryStore:
             # Recompute HRR vector if content changed
             if content is not None:
                 self._compute_hrr_vector(fact_id, content)
+                self._compute_embedding(fact_id, content)
             # Rebuild bank for relevant category
             cat = category or self._conn.execute(
                 "SELECT category FROM facts WHERE fact_id = ?", (fact_id,)
@@ -494,6 +501,64 @@ class MemoryStore:
                 (hrr.phases_to_bytes(vector), fact_id),
             )
             self._conn.commit()
+
+    def _compute_embedding(self, fact_id: int, content: str) -> None:
+        """Compute and store a dense embedding for a fact.
+
+        No-op if sentence-transformers is unavailable (graceful degradation —
+        retrieval keeps working on FTS5+Jaccard+HRR alone). Failures never
+        propagate into the write path.
+        """
+        try:
+            from . import embedding as emb
+        except ImportError:
+            import embedding as emb  # type: ignore[no-redef]
+        if not emb.is_available():
+            return
+        try:
+            blob = emb.embed_to_bytes(content)
+        except Exception:
+            blob = None
+        if blob is None:
+            return
+        with self._lock:
+            self._conn.execute(
+                "UPDATE facts SET embedding = ? WHERE fact_id = ?",
+                (blob, fact_id),
+            )
+            self._conn.commit()
+
+    def backfill_embeddings(self, *, only_missing: bool = True) -> int:
+        """Compute embeddings for stored facts that lack them.
+
+        Used when activating Hybrid-Full on a store whose facts predate the
+        embedding column, or after changing the embedding model. Returns the
+        number of facts (re)embedded. No-op if embeddings are unavailable.
+        """
+        try:
+            from . import embedding as emb
+        except ImportError:
+            import embedding as emb  # type: ignore[no-redef]
+        if not emb.is_available():
+            return 0
+        where = "WHERE embedding IS NULL" if only_missing else ""
+        rows = self._conn.execute(
+            f"SELECT fact_id, content FROM facts {where}"
+        ).fetchall()
+        count = 0
+        for row in rows:
+            blob = emb.embed_to_bytes(row["content"])
+            if blob is None:
+                continue
+            with self._lock:
+                self._conn.execute(
+                    "UPDATE facts SET embedding = ? WHERE fact_id = ?",
+                    (blob, row["fact_id"]),
+                )
+            count += 1
+        with self._lock:
+            self._conn.commit()
+        return count
 
     def _rebuild_bank(self, category: str) -> None:
         """Full rebuild of a category's memory bank from all its fact vectors."""

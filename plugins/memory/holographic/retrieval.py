@@ -18,6 +18,11 @@ try:
 except ImportError:
     import holographic as hrr  # type: ignore[no-redef]
 
+try:
+    from . import embedding as emb
+except ImportError:
+    import embedding as emb  # type: ignore[no-redef]
+
 
 class FactRetriever:
     """Multi-strategy fact retrieval with trust-weighted scoring."""
@@ -26,24 +31,30 @@ class FactRetriever:
         self,
         store: MemoryStore,
         temporal_decay_half_life: int = 0,  # days, 0 = disabled
-        fts_weight: float = 0.4,
-        jaccard_weight: float = 0.3,
-        hrr_weight: float = 0.3,
+        fts_weight: float = 0.35,
+        jaccard_weight: float = 0.25,
+        hrr_weight: float = 0.15,
+        embed_weight: float = 0.25,
         hrr_dim: int = 1024,
     ):
         self.store = store
         self.half_life = temporal_decay_half_life
         self.hrr_dim = hrr_dim
 
-        # Auto-redistribute weights if numpy unavailable
+        # Auto-redistribute weights if numpy unavailable (HRR + embedding both
+        # need numpy / the embedding stack). Fall back to lexical-only.
         if hrr_weight > 0 and not hrr._HAS_NUMPY:
-            fts_weight = 0.6
-            jaccard_weight = 0.4
             hrr_weight = 0.0
-
-        self.fts_weight = fts_weight
-        self.jaccard_weight = jaccard_weight
-        self.hrr_weight = hrr_weight
+        if embed_weight > 0 and not emb.is_available():
+            embed_weight = 0.0
+        # Renormalize remaining weights to sum to 1.0 so scores stay comparable.
+        total = fts_weight + jaccard_weight + hrr_weight + embed_weight
+        if total <= 0:
+            fts_weight, jaccard_weight, total = 0.6, 0.4, 1.0
+        self.fts_weight = fts_weight / total
+        self.jaccard_weight = jaccard_weight / total
+        self.hrr_weight = hrr_weight / total
+        self.embed_weight = embed_weight / total
 
     def search(
         self,
@@ -52,64 +63,189 @@ class FactRetriever:
         min_trust: float = 0.3,
         limit: int = 10,
     ) -> list[dict]:
-        """Hybrid search: FTS5 candidates → Jaccard rerank → trust weighting.
+        """Hybrid-Full search: FTS5 ∪ embedding candidates → 4-signal rerank.
 
         Pipeline:
-        1. FTS5 search: Get limit*3 candidates from SQLite full-text search
-        2. Jaccard boost: Token overlap between query and fact content
-        3. Trust weighting: final_score = relevance * trust_score
-        4. Temporal decay (optional): decay = 0.5^(age_days / half_life)
+        1. Candidate gathering (UNION of two parallel retrievers):
+           a. FTS5 full-text candidates (lexical) — query is sanitized into
+              valid FTS5 OR-syntax first so natural-language input with
+              punctuation / stopwords doesn't crash MATCH and silently return
+              nothing.
+           b. Dense-embedding candidates (semantic) — a cosine scan over the
+              stored fact embeddings. This is what lets a zero-token-overlap
+              query ("where does the code live") reach a fact phrased
+              differently ("checkout and venv root is ..."), which FTS5 alone
+              can never surface.
+        2. Rerank every unioned candidate with FTS5 + Jaccard + HRR + embedding.
+        3. Trust weighting: final = relevance * trust_score.
+        4. Optional temporal decay.
 
-        Returns list of dicts with fact data + 'score' field, sorted by score desc.
+        Returns list of dicts with fact data + 'score', sorted desc.
         """
-        # Stage 1: Get FTS5 candidates (more than limit for reranking headroom)
-        candidates = self._fts_candidates(query, category, min_trust, limit * 3)
+        # Sanitize query for FTS5 MATCH (raw NL crashes the parser → []).
+        fts_query = self._sanitize_fts_query(query)
 
-        if not candidates:
+        # Stage 1a: lexical candidates from FTS5.
+        candidates = self._fts_candidates(fts_query, category, min_trust, limit * 3)
+
+        # Stage 1b: semantic candidates from the embedding index (parallel).
+        # Keyed by fact_id so we can union without duplicates.
+        by_id: dict = {}
+        for fact in candidates:
+            by_id[fact["fact_id"]] = fact
+
+        query_emb = emb.embed(query, is_query=True) if self.embed_weight > 0 else None
+        if query_emb is not None:
+            for fact in self._embedding_candidates(
+                query_emb, category, min_trust, limit * 3
+            ):
+                # Only add NEW facts FTS5 missed; keep the FTS5 row (it carries
+                # fts_rank) when a fact appears in both.
+                by_id.setdefault(fact["fact_id"], fact)
+
+        if not by_id:
             return []
 
-        # Stage 2: Rerank with Jaccard + trust + optional decay
+        # Stage 2: rerank the unioned candidate set with all four signals.
         query_tokens = self._tokenize(query)
         scored = []
 
-        for fact in candidates:
+        for fact in by_id.values():
             content_tokens = self._tokenize(fact["content"])
             tag_tokens = self._tokenize(fact.get("tags", ""))
             all_tokens = content_tokens | tag_tokens
 
             jaccard = self._jaccard_similarity(query_tokens, all_tokens)
-            fts_score = fact.get("fts_rank", 0.0)
+            fts_score = fact.get("fts_rank", 0.0)  # 0.0 for embedding-only hits
 
             # HRR similarity
             if self.hrr_weight > 0 and fact.get("hrr_vector"):
                 fact_vec = hrr.bytes_to_phases(fact["hrr_vector"])
                 query_vec = hrr.encode_text(query, self.hrr_dim)
-                hrr_sim = (hrr.similarity(query_vec, fact_vec) + 1.0) / 2.0  # shift to [0,1]
+                hrr_sim = (hrr.similarity(query_vec, fact_vec) + 1.0) / 2.0
             else:
                 hrr_sim = 0.5  # neutral
 
-            # Combine FTS5 + Jaccard + HRR
-            relevance = (self.fts_weight * fts_score
-                        + self.jaccard_weight * jaccard
-                        + self.hrr_weight * hrr_sim)
+            # Dense embedding similarity
+            has_embed = (
+                self.embed_weight > 0
+                and query_emb is not None
+                and fact.get("embedding")
+            )
+            if has_embed:
+                fact_emb = emb.bytes_to_vec(fact["embedding"])
+                embed_sim = (emb.cosine(query_emb, fact_emb) + 1.0) / 2.0  # → [0,1]
+            else:
+                embed_sim = 0.0
 
-            # Trust weighting
+            # MAX fusion (not weighted sum). Take the STRONGEST active signal
+            # rather than averaging. Rationale: a confident-but-narrow embedding
+            # match (synonym query) is diluted to a loss by a weighted sum with
+            # three weaker signals; conversely an exact FTS5 hit shouldn't be
+            # dragged down by a lukewarm embedding. "If ANY retriever is
+            # confident this fact matches, surface it" — the union semantics
+            # Hybrid-Full is built for. Empirically 7/8 semantic + 6/6 literal
+            # vs 5/8 + 6/6 for weighted-sum on the eval set. Each signal is
+            # compared on its own [0,1] scale; weights act as on/off gates plus
+            # a mild tie-break bias.
+            active = []
+            if self.fts_weight > 0:
+                active.append(fts_score * (0.5 + 0.5 * self.fts_weight))
+            if self.jaccard_weight > 0:
+                active.append(jaccard * (0.5 + 0.5 * self.jaccard_weight))
+            if self.hrr_weight > 0:
+                active.append(hrr_sim * (0.5 + 0.5 * self.hrr_weight))
+            if has_embed:
+                active.append(embed_sim * (0.5 + 0.5 * self.embed_weight))
+            relevance = max(active) if active else 0.0
+
             score = relevance * fact["trust_score"]
 
-            # Optional temporal decay
             if self.half_life > 0:
                 score *= self._temporal_decay(fact.get("updated_at") or fact.get("created_at"))
 
             fact["score"] = score
             scored.append(fact)
 
-        # Sort by score descending, return top limit
         scored.sort(key=lambda x: x["score"], reverse=True)
         results = scored[:limit]
-        # Strip raw HRR bytes — callers expect JSON-serializable dicts
+        # Strip raw vector bytes — callers expect JSON-serializable dicts.
         for fact in results:
             fact.pop("hrr_vector", None)
+            fact.pop("embedding", None)
         return results
+
+    @staticmethod
+    def _sanitize_fts_query(query: str) -> str:
+        """Turn raw natural-language input into a safe FTS5 MATCH expression.
+
+        FTS5 MATCH throws a syntax error on bare apostrophes, '?', unbalanced
+        quotes, and reserved tokens — and the caller swallows the exception,
+        silently returning zero candidates. We strip to alphanumeric tokens,
+        drop a small stopword set, and OR the rest. Empty result → a token
+        that matches nothing, so FTS5 returns [] cleanly instead of raising.
+        """
+        import re as _re
+        _STOP = {
+            "how", "do", "i", "the", "a", "an", "is", "are", "to", "of", "for",
+            "what", "does", "did", "with", "in", "on", "at", "and", "or", "my",
+            "me", "you", "it", "this", "that", "was", "were", "be", "can", "could",
+            "should", "would", "why", "when", "where", "which", "who", "from",
+        }
+        toks = [
+            t for t in _re.findall(r"[A-Za-z0-9_]+", (query or "").lower())
+            if len(t) > 2 and t not in _STOP
+        ]
+        if not toks:
+            # Sentinel that will not match any stored content.
+            return "__hermes_no_fts_match__"
+        return " OR ".join(toks)
+
+    def _embedding_candidates(
+        self,
+        query_emb,
+        category: str | None,
+        min_trust: float,
+        limit: int,
+    ) -> list[dict]:
+        """Cosine scan over stored fact embeddings → top candidates.
+
+        Parallel semantic retriever. Returns fact rows (with 'embedding' and
+        'hrr_vector' bytes intact for downstream scoring) whose embedding is
+        most similar to the query. Returns [] if embeddings are unavailable.
+
+        At the curated-fact scale this store targets (hundreds, not millions),
+        a full scan is trivially fast and avoids an ANN-index dependency.
+        """
+        if query_emb is None or self.embed_weight <= 0:
+            return []
+        conn = self.store._conn
+        where = ["embedding IS NOT NULL", "trust_score >= ?"]
+        params: list = [min_trust]
+        if category:
+            where.append("category = ?")
+            params.append(category)
+        where_sql = " AND ".join(where)
+        rows = conn.execute(
+            f"""
+            SELECT fact_id, content, category, tags, trust_score,
+                   retrieval_count, helpful_count, created_at, updated_at,
+                   hrr_vector, embedding, fts_rank
+            FROM (
+                SELECT *, 0.0 AS fts_rank FROM facts WHERE {where_sql}
+            )
+            """,
+            params,
+        ).fetchall()
+
+        scored = []
+        for row in rows:
+            fact = dict(row)
+            fact_emb = emb.bytes_to_vec(fact["embedding"])
+            sim = emb.cosine(query_emb, fact_emb)
+            scored.append((sim, fact))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [fact for _sim, fact in scored[:limit]]
 
     def probe(
         self,

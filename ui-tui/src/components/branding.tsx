@@ -165,6 +165,10 @@ export function SessionPanel({ info, maxWidth, sid, t }: SessionPanelProps) {
   const wide = cols >= 90 && leftW + 40 < cols
   const w = Math.max(20, wide ? cols - leftW - 14 : cols - 12)
   const lineBudget = Math.max(12, w - 2)
+  // Prefer the persisted DB session_key (retrievable via session_search / state.db)
+  // over the ephemeral in-memory RPC handle (sid). Fall back to sid only during
+  // the early paint before the DB row/key exists.
+  const sessionLabel = info.session_key || sid
   const strip = (s: string) => (s.endsWith('_tools') ? s.slice(0, -6) : s)
 
   // ── Local collapse state for each section ──
@@ -293,10 +297,10 @@ export function SessionPanel({ info, maxWidth, sid, t }: SessionPanelProps) {
             {info.cwd || process.cwd()}
           </Text>
 
-          {sid && (
+          {sessionLabel && (
             <Text>
               <Text color={t.color.sessionLabel}>Session: </Text>
-              <Text color={t.color.sessionBorder}>{sid}</Text>
+              <Text color={t.color.sessionBorder}>{sessionLabel}</Text>
             </Text>
           )}
         </Box>
@@ -322,10 +326,10 @@ export function SessionPanel({ info, maxWidth, sid, t }: SessionPanelProps) {
             <Text color={t.color.muted} wrap="truncate-end">
               {info.cwd || process.cwd()}
             </Text>
-            {sid && (
+            {sessionLabel && (
               <Text wrap="truncate-end">
                 <Text color={t.color.sessionLabel}>Session: </Text>
-                <Text color={t.color.sessionBorder}>{sid}</Text>
+                <Text color={t.color.sessionBorder}>{sessionLabel}</Text>
               </Text>
             )}
           </Box>

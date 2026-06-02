@@ -152,6 +152,7 @@ export interface SessionInfo {
   profile_name?: string
   reasoning_effort?: string
   release_date?: string
+  session_key?: string
   service_tier?: string
   skills: Record<string, string[]>
   system_prompt?: string

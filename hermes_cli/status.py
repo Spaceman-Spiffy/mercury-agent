@@ -94,10 +94,14 @@ def show_status(args):
     show_all = getattr(args, 'all', False)
     deep = getattr(args, 'deep', False)
 
+    from hermes_cli.build_info import get_brand_name
+
     print()
-    print(color("┌─────────────────────────────────────────────────────────┐", Colors.CYAN))
-    print(color("│                 ⚕ Hermes Agent Status                  │", Colors.CYAN))
-    print(color("└─────────────────────────────────────────────────────────┘", Colors.CYAN))
+    _box_w = 57  # inner width between the corner glyphs
+    _title = f"☿ {get_brand_name()} Status".center(_box_w)
+    print(color("┌" + "─" * _box_w + "┐", Colors.CYAN))
+    print(color("│" + _title + "│", Colors.CYAN))
+    print(color("└" + "─" * _box_w + "┘", Colors.CYAN))
 
     # =========================================================================
     # Environment

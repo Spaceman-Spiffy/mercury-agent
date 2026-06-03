@@ -25,8 +25,31 @@ Behaviour:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
+
+# Display brand name reported by the CLI ("<brand> v<version> ...").  This is a
+# fork-local re-identification: the install presents as "Mercury" rather than
+# the stock "Hermes Agent".  Overridable at runtime via HERMES_BRAND_NAME so a
+# persona switch (e.g. back to Apollo) needs no code edit.
+#
+# SCOPE: this affects CLI stdout / banners ONLY.  It is deliberately NOT wired
+# into agent/anthropic_adapter.py's OAuth identity-substitution table, which is
+# load-bearing for Claude-subscription billing and must keep the literal
+# "Hermes Agent" string.  Renaming here has zero billing/filter impact because
+# these strings are never sent to Anthropic.
+_DEFAULT_BRAND_NAME = "Mercury"
+
+
+def get_brand_name() -> str:
+    """Return the display brand name for CLI version/identity output.
+
+    Reads ``HERMES_BRAND_NAME`` at call time (empty/whitespace falls back to the
+    default) so the value can be flipped per-process without a restart of the
+    importing module.
+    """
+    return (os.environ.get("HERMES_BRAND_NAME") or "").strip() or _DEFAULT_BRAND_NAME
 
 # Path is resolved relative to this module so it works regardless of cwd —
 # matches the pattern used by ``banner._resolve_repo_dir``.

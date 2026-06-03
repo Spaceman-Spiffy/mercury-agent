@@ -3,11 +3,12 @@ from unittest.mock import MagicMock, patch
 
 def test_format_banner_version_label_without_git_state():
     from hermes_cli import banner
+    from hermes_cli.build_info import get_brand_name
 
     with patch.object(banner, "get_git_banner_state", return_value=None):
         value = banner.format_banner_version_label()
 
-    assert value == f"Hermes Agent v{banner.VERSION} ({banner.RELEASE_DATE})"
+    assert value == f"{get_brand_name()} v{banner.VERSION} ({banner.RELEASE_DATE})"
 
 
 def test_format_banner_version_label_on_upstream_main():

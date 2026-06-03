@@ -81,6 +81,12 @@ try:
 except Exception:
     HERMES_VERSION = "0.0.0"
 
+try:
+    from hermes_cli.build_info import get_brand_name as _get_brand_name
+except Exception:  # pragma: no cover - defensive: never break ACP on import
+    def _get_brand_name() -> str:
+        return "Mercury"
+
 # Thread pool for running AIAgent (synchronous) in parallel.
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="acp-agent")
 
@@ -1875,7 +1881,7 @@ class HermesACPAgent(acp.Agent):
         return f"Queued for the next turn. ({depth} queued)"
 
     def _cmd_version(self, args: str, state: SessionState) -> str:
-        return f"Hermes Agent v{HERMES_VERSION}"
+        return f"{_get_brand_name()} v{HERMES_VERSION}"
 
     # ---- Model switching (ACP protocol method) -------------------------------
 

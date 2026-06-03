@@ -49,6 +49,9 @@ export interface Theme {
   brand: ThemeBrand
   bannerLogo: string
   bannerHero: string
+  /** When true, the skin opts into the bundled truecolor half-block avatar
+   *  (mercuryAvatar.ts) for the wide hero column, in place of the ASCII hero. */
+  bannerHeroAvatar?: boolean
 }
 
 // ── Color math ───────────────────────────────────────────────────────
@@ -584,6 +587,9 @@ export function fromSkin(
     },
 
     bannerLogo,
-    bannerHero
+    bannerHero,
+    bannerHeroAvatar:
+      branding.banner_hero_avatar === 'true' ||
+      (branding.banner_hero_avatar as unknown) === true
   }, process.env, DEFAULT_LIGHT_MODE)
 }

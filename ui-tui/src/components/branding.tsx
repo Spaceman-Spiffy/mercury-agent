@@ -1,8 +1,9 @@
-import { Box, Text, useStdout } from '@hermes/ink'
+import { Box, RawAnsi, Text, useStdout } from '@hermes/ink'
 import { useEffect, useState } from 'react'
 import unicodeSpinners from 'unicode-animations'
 
 import { artWidth, caduceus, CADUCEUS_WIDTH, logo, LOGO_WIDTH } from '../banner.js'
+import { MERCURY_AVATAR_ROWS, MERCURY_AVATAR_WIDTH } from '../mercuryAvatar.js'
 import { flat } from '../lib/text.js'
 import type { Theme } from '../theme.js'
 import type { PanelSection, SessionInfo } from '../types.js'
@@ -161,7 +162,14 @@ export function SessionPanel({ info, maxWidth, sid, t }: SessionPanelProps) {
   const term = useStdout().stdout?.columns ?? 100
   const cols = Math.max(20, Math.min(term, maxWidth ?? term))
   const heroLines = caduceus(t.color, t.bannerHero || undefined)
-  const leftW = Math.min((artWidth(heroLines) || CADUCEUS_WIDTH) + 4, Math.floor(cols * 0.4))
+  // Opt-in truecolor half-block avatar (mercuryAvatar.ts): use it for the hero
+  // column only when the skin asks for it AND the terminal is wide enough to
+  // show the full art plus a usable (>=40 col) right panel. Otherwise fall back
+  // to the ASCII caduceus, which is reversible by removing the skin flag.
+  const useAvatar = !!t.bannerHeroAvatar && cols >= MERCURY_AVATAR_WIDTH + 4 + 40 + 14
+  const leftW = useAvatar
+    ? MERCURY_AVATAR_WIDTH + 4
+    : Math.min((artWidth(heroLines) || CADUCEUS_WIDTH) + 4, Math.floor(cols * 0.4))
   const wide = cols >= 90 && leftW + 40 < cols
   const w = Math.max(20, wide ? cols - leftW - 14 : cols - 12)
   const lineBudget = Math.max(12, w - 2)
@@ -285,7 +293,11 @@ export function SessionPanel({ info, maxWidth, sid, t }: SessionPanelProps) {
     <Box borderColor={t.color.border} borderStyle="round" marginBottom={1} paddingX={2} paddingY={1}>
       {wide && (
         <Box flexDirection="column" marginRight={2} width={leftW}>
-          <ArtLines lines={heroLines} />
+          {useAvatar ? (
+            <RawAnsi lines={MERCURY_AVATAR_ROWS} width={MERCURY_AVATAR_WIDTH} />
+          ) : (
+            <ArtLines lines={heroLines} />
+          )}
           <Text />
 
           <Text color={t.color.accent}>

@@ -1507,6 +1507,96 @@ class TestMatrixSyncLoop:
         assert "!joined:example.org" in adapter._joined_rooms
         assert "!invited:example.org" in adapter._joined_rooms
 
+    @pytest.mark.asyncio
+    async def test_sync_loop_retries_on_502_with_ip_containing_403(self):
+        """A transient 502 whose body embeds an IP containing '403' must
+        NOT be misclassified as a permanent auth error.
+
+        Regression for the Cloudflare 502 page embedding the client IPv6
+        address (e.g. segment '1403'), which the naive '403 in err_str'
+        check matched, killing the sync loop on a transient outage.
+        """
+        adapter = _make_adapter()
+        adapter._closing = False
+
+        cf_502 = (
+            "502: <!DOCTYPE html><title>apollolaboratories.net | 502: "
+            "Bad gateway</title>Your IP: 2605:d580:1403:4a9d:ae34:16d0:5451:c74f"
+        )
+
+        call_count = 0
+
+        async def _sync(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception(cf_502)
+            # Second iteration: stop the loop cleanly.
+            adapter._closing = True
+            return {"next_batch": "s1"}
+
+        mock_sync_store = MagicMock()
+        mock_sync_store.get_next_batch = AsyncMock(return_value=None)
+        mock_sync_store.put_next_batch = AsyncMock()
+
+        fake_client = MagicMock()
+        fake_client.sync = AsyncMock(side_effect=_sync)
+        fake_client.sync_store = mock_sync_store
+        fake_client.handle_sync = MagicMock(return_value=[])
+        adapter._client = fake_client
+
+        with patch("asyncio.sleep", AsyncMock()):
+            with patch.object(adapter, "_set_fatal_error") as mock_fatal:
+                await adapter._sync_loop()
+
+        # The loop must have retried (reached the 2nd sync call) and never
+        # marked a fatal auth error.
+        assert call_count == 2
+        mock_fatal.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sync_loop_stops_and_marks_fatal_on_real_401(self):
+        """A genuine 401 must stop the loop and record a non-retryable
+        fatal error."""
+        adapter = _make_adapter()
+        adapter._closing = False
+
+        async def _sync(**kwargs):
+            raise Exception("401: M_UNKNOWN_TOKEN: Invalid access token")
+
+        mock_sync_store = MagicMock()
+        mock_sync_store.get_next_batch = AsyncMock(return_value=None)
+
+        fake_client = MagicMock()
+        fake_client.sync = AsyncMock(side_effect=_sync)
+        fake_client.sync_store = mock_sync_store
+        adapter._client = fake_client
+
+        with patch.object(adapter, "_notify_fatal_error", AsyncMock()):
+            with patch.object(adapter, "_set_fatal_error") as mock_fatal:
+                await adapter._sync_loop()
+
+        mock_fatal.assert_called_once()
+        _, kwargs = mock_fatal.call_args
+        assert kwargs.get("retryable") is False
+
+    def test_on_sync_task_done_preserves_existing_fatal_error(self):
+        """The done-callback must NOT overwrite a non-retryable fatal error
+        already set inside the loop (e.g. revoked token), which would
+        silently reclassify it as retryable and re-queue forever."""
+        adapter = _make_adapter()
+        adapter._closing = False
+
+        # Simulate the in-loop auth handler having already marked fatal.
+        with patch.object(type(adapter), "has_fatal_error", property(lambda self: True)):
+            with patch.object(adapter, "_set_fatal_error") as mock_fatal:
+                done_task = MagicMock()
+                done_task.result = MagicMock(return_value=None)
+                adapter._on_sync_task_done(done_task)
+
+        # Must bail before overwriting — no second _set_fatal_error call.
+        mock_fatal.assert_not_called()
+
 
 class TestMatrixUploadAndSend:
     @pytest.mark.asyncio

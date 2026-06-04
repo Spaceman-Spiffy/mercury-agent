@@ -1029,6 +1029,7 @@ class MatrixAdapter(BasePlatformAdapter):
 
         # Start the sync loop.
         self._sync_task = asyncio.create_task(self._sync_loop())
+        self._sync_task.add_done_callback(self._on_sync_task_done)
         self._mark_connected()
         return True
 
@@ -1533,6 +1534,12 @@ class MatrixAdapter(BasePlatformAdapter):
                             "Matrix: permanent auth error from sync: %s — stopping",
                             _sync_msg,
                         )
+                        self._set_fatal_error(
+                            "matrix_auth_error",
+                            f"Matrix permanent auth error: {_sync_msg}",
+                            retryable=False,
+                        )
+                        await self._notify_fatal_error()
                         return
 
                 if isinstance(sync_data, dict):
@@ -1563,8 +1570,24 @@ class MatrixAdapter(BasePlatformAdapter):
             except Exception as exc:
                 if self._closing:
                     return
-                # Detect permanent auth/permission failures.
                 err_str = str(exc).lower()
+
+                # Transient gateway/proxy errors (502/503/504) must be caught
+                # BEFORE the auth check.  Cloudflare error pages embed the
+                # client's IP address, which can contain "401" or "403" as
+                # substrings (e.g. IPv6 segment 1403), causing false-positive
+                # auth detection.
+                if any(code in err_str for code in (
+                    "502", "503", "504", "bad gateway",
+                    "service unavailable", "gateway timeout",
+                )):
+                    logger.warning(
+                        "Matrix: transient gateway error (%s) — retrying in 5s", exc
+                    )
+                    await asyncio.sleep(5)
+                    continue
+
+                # Detect permanent auth/permission failures.
                 if (
                     "401" in err_str
                     or "403" in err_str
@@ -1574,9 +1597,49 @@ class MatrixAdapter(BasePlatformAdapter):
                     logger.error(
                         "Matrix: permanent auth error: %s — stopping sync", exc
                     )
+                    self._set_fatal_error(
+                        "matrix_auth_error",
+                        f"Matrix permanent auth error: {exc}",
+                        retryable=False,
+                    )
+                    await self._notify_fatal_error()
                     return
+
                 logger.warning("Matrix: sync error: %s — retrying in 5s", exc)
                 await asyncio.sleep(5)
+
+    def _on_sync_task_done(self, task: asyncio.Task) -> None:
+        """Called when the sync loop task completes unexpectedly.
+
+        If the sync loop exits without being cancelled (i.e. not during
+        disconnect), mark the adapter as fatally failed so the gateway
+        can queue it for background reconnection or trigger a restart.
+
+        If a fatal error was already recorded inside the loop (e.g. a
+        revoked access token set ``retryable=False`` before returning),
+        we must NOT overwrite it here — doing so would silently reclassify
+        a permanent auth failure as a retryable one and re-queue it
+        forever. Bail when a fatal error is already present.
+        """
+        if self._closing or self.has_fatal_error:
+            return
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.error("Matrix: sync loop died with exception: %s", exc)
+        if not self._closing:
+            self._set_fatal_error(
+                "matrix_sync_died",
+                "Matrix sync loop exited unexpectedly",
+                retryable=True,
+            )
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._notify_fatal_error())
+            except RuntimeError:
+                pass
 
     # ------------------------------------------------------------------
     # Event callbacks

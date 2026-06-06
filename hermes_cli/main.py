@@ -8691,6 +8691,16 @@ def _invalidate_update_cache():
         except Exception:
             pass
 
+        try:
+            # Also clear the shared profile home cache (hermes-sync may have
+            # filled it while running under the default profile).
+            if home != default_home:
+                cache_file = default_home / ".update_check"
+                if cache_file.exists():
+                    cache_file.unlink()
+        except Exception:
+            pass
+
 
 def _load_installable_optional_extras(group: str = "all") -> list[str]:
     """Return optional extras referenced by a dependency group.

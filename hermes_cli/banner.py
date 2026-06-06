@@ -249,6 +249,14 @@ def check_for_updates() -> Optional[int]:
     # `check_via_pypi()` compares against VERSION, so a `pip install --upgrade`
     # changes VERSION but leaves rev unchanged (both None), and without this
     # the stale "behind" count would survive the upgrade for up to 6h. See #34491.
+    #
+    # Also guard against git state changes (e.g. `hermes sync` merged upstream):
+    # `hermes sync` lives outside the repo and does NOT invoke `hermes update`,
+    # so it never hits the cache-clear in main.py; a stale `behind` count from
+    # pre-merge would otherwise survive for up to 6h. Including the current
+    # HEAD short hash in the cache key makes a new commit auto-invalidate it.
+    head_repo = _resolve_repo_dir()
+    head_str = _git_short_hash(head_repo, "HEAD") if head_repo else None
     now = time.time()
     try:
         if cache_file.exists():
@@ -257,6 +265,7 @@ def check_for_updates() -> Optional[int]:
                 now - cached.get("ts", 0) < _UPDATE_CHECK_CACHE_SECONDS
                 and cached.get("rev") == embedded_rev
                 and cached.get("ver") == VERSION
+                and cached.get("head") == head_str
             ):
                 return cached.get("behind")
     except Exception:
@@ -278,7 +287,7 @@ def check_for_updates() -> Optional[int]:
 
     try:
         cache_file.write_text(
-            json.dumps({"ts": now, "behind": behind, "rev": embedded_rev, "ver": VERSION})
+            json.dumps({"ts": now, "behind": behind, "rev": embedded_rev, "ver": VERSION, "head": head_str})
         )
     except Exception:
         pass

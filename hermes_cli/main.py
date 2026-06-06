@@ -6646,11 +6646,10 @@ def cmd_import(args):
 
     run_import(args)
 
-
 def _print_version_info(*, check_updates: bool = True) -> None:
-    from hermes_cli.build_info import get_brand_name
+    from hermes_cli.banner import format_banner_version_label
 
-    print(f"{get_brand_name()} v{__version__} ({__release_date__})")
+    print(format_banner_version_label())
     print(f"Project: {PROJECT_ROOT}")
 
     # Show Python version

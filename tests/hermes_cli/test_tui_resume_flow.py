@@ -405,8 +405,12 @@ def test_termux_ultrafast_version_runs_before_heavy_startup(
 
     assert main_mod._try_termux_ultrafast_version() is True
 
+    from hermes_cli.build_info import get_brand_name
+
     out = capsys.readouterr().out
-    assert "Hermes Agent v" in out
+    # The brand name is fork-configurable (see hermes_cli.build_info); assert
+    # the version label is present regardless of which brand is in effect.
+    assert f"{get_brand_name()} v" in out
     assert "Project:" in out
     assert "Python:" in out
     assert "OpenAI SDK:" in out

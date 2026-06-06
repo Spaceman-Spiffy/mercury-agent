@@ -5,6 +5,7 @@ from unittest.mock import patch
 from rich.console import Console
 
 import hermes_cli.banner as banner
+from hermes_cli.build_info import get_brand_name
 import model_tools
 import tools.mcp_tool
 
@@ -98,8 +99,10 @@ def test_build_welcome_banner_title_is_hyperlinked_to_release():
         )
 
     raw = buf.getvalue()
-    # The existing version label must still be present in the title
-    assert "Hermes Agent v" in raw, "Version label missing from title"
+    # The version label (brand + " v" + version) must still be present in the title.
+    # The brand name is fork-configurable (see hermes_cli.build_info), so we read it
+    # dynamically rather than asserting on a literal.
+    assert f"{get_brand_name()} v" in raw, "Version label missing from title"
     # OSC-8 hyperlink escape sequence present with the release URL
     assert "\x1b]8;" in raw, "OSC-8 hyperlink not emitted"
     assert "releases/tag/v2026.4.23" in raw, "Release URL missing from banner output"
@@ -131,7 +134,7 @@ def test_build_welcome_banner_title_falls_back_when_no_tag():
         )
 
     raw = buf.getvalue()
-    assert "Hermes Agent v" in raw, "Version label missing from title"
+    assert f"{get_brand_name()} v" in raw, "Version label missing from title"
     assert "\x1b]8;" not in raw, "OSC-8 hyperlink should not be emitted without a tag"
 
 

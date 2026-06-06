@@ -2914,6 +2914,7 @@ def test_resolve_hermes_argv_module_actually_runs():
     import hermes_cli.kanban_db as kb
     import shutil
     import unittest.mock as mock
+    from hermes_cli.build_info import get_brand_name
 
     with mock.patch.dict(os.environ, {}, clear=False):
         os.environ.pop("HERMES_BIN", None)
@@ -2924,7 +2925,9 @@ def test_resolve_hermes_argv_module_actually_runs():
         f"`{' '.join(argv)} --version` failed (rc={r.returncode}); "
         f"stderr={r.stderr[:200]!r}"
     )
-    assert "Hermes Agent" in r.stdout, f"unexpected output: {r.stdout[:200]!r}"
+    # The brand string is fork-configurable (see hermes_cli.build_info); assert
+    # the version banner contains whatever brand name is currently in effect.
+    assert get_brand_name() in r.stdout, f"unexpected output: {r.stdout[:200]!r}"
 
 
 # ---------------------------------------------------------------------------

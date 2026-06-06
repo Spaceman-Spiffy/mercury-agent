@@ -243,6 +243,38 @@ class TestNousProfile:
         )
         assert "reasoning" not in eb
 
+    def test_kimi_model_thinking_keep_all(self):
+        """Kimi-family models via Nous portal get thinking.keep='all'."""
+        p = get_provider_profile("nous")
+        eb, _ = p.build_api_kwargs_extras(
+            reasoning_config={"enabled": True, "effort": "medium"},
+            supports_reasoning=True,
+            model="moonshotai/kimi-k2.6",
+        )
+        assert eb["thinking"]["keep"] == "all"
+        assert eb["reasoning"] == {"enabled": True, "effort": "medium"}
+
+    def test_non_kimi_model_no_thinking(self):
+        """Non-Kimi models should not receive the thinking key."""
+        p = get_provider_profile("nous")
+        eb, _ = p.build_api_kwargs_extras(
+            reasoning_config={"enabled": True, "effort": "medium"},
+            supports_reasoning=True,
+            model="anthropic/claude-opus-4",
+        )
+        assert "thinking" not in eb
+
+    def test_kimi_disabled_reasoning_no_thinking(self):
+        """When reasoning is disabled, no thinking key should be added."""
+        p = get_provider_profile("nous")
+        eb, _ = p.build_api_kwargs_extras(
+            reasoning_config={"enabled": False},
+            supports_reasoning=True,
+            model="moonshotai/kimi-k2.6",
+        )
+        assert "thinking" not in eb
+        assert "reasoning" not in eb
+
 
 class TestQwenProfile:
     def test_max_tokens(self):

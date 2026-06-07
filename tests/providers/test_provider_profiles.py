@@ -243,16 +243,23 @@ class TestNousProfile:
         )
         assert "reasoning" not in eb
 
-    def test_kimi_model_thinking_keep_all(self):
-        """Kimi-family models via Nous portal get thinking.keep='all'."""
+    def test_kimi_model_no_thinking_keep_via_portal(self):
+        """Nous portal does NOT honor thinking.keep (proven inert 2026-06-06),
+        so the nous profile must NOT inject it for Kimi models. Preserved
+        Thinking lives on the Moonshot-direct kimi-coding provider instead."""
         p = get_provider_profile("nous")
         eb, _ = p.build_api_kwargs_extras(
             reasoning_config={"enabled": True, "effort": "medium"},
             supports_reasoning=True,
             model="moonshotai/kimi-k2.6",
         )
-        assert eb["thinking"]["keep"] == "all"
+        assert "thinking" not in eb
         assert eb["reasoning"] == {"enabled": True, "effort": "medium"}
+
+    def test_base_url_uses_inference_api_host(self):
+        """Live endpoint is inference-api.nousresearch.com (not inference.…)."""
+        p = get_provider_profile("nous")
+        assert p.base_url == "https://inference-api.nousresearch.com/v1"
 
     def test_non_kimi_model_no_thinking(self):
         """Non-Kimi models should not receive the thinking key."""
@@ -311,6 +318,42 @@ class TestQwenProfile:
         eb, tl = p.build_api_kwargs_extras(qwen_session_metadata=meta)
         assert tl["metadata"] == meta
         assert "metadata" not in eb
+
+
+class TestKimiCodingProfile:
+    """Moonshot-direct provider — Preserved Thinking lives here (portal drops it)."""
+
+    def test_k26_injects_thinking_keep_all(self):
+        p = get_provider_profile("kimi-coding")
+        eb, tl = p.build_api_kwargs_extras(
+            reasoning_config={"enabled": True, "effort": "medium"},
+            model="kimi-k2.6",
+        )
+        assert eb["thinking"] == {"type": "enabled", "keep": "all"}
+        assert tl["reasoning_effort"] == "medium"
+
+    def test_k26_no_config_still_keeps(self):
+        p = get_provider_profile("kimi-coding")
+        eb, tl = p.build_api_kwargs_extras(reasoning_config=None, model="kimi-k2.6")
+        assert eb["thinking"] == {"type": "enabled", "keep": "all"}
+
+    def test_thinking_disabled_no_keep(self):
+        p = get_provider_profile("kimi-coding")
+        eb, _ = p.build_api_kwargs_extras(
+            reasoning_config={"enabled": False}, model="kimi-k2.6"
+        )
+        assert eb["thinking"] == {"type": "disabled"}
+        assert "keep" not in eb["thinking"]
+
+    def test_non_thinking_kimi_no_keep(self):
+        """Non-thinking Kimi models (turbo, k2.5) must NOT get keep."""
+        p = get_provider_profile("kimi-coding")
+        for model in ("kimi-k2-turbo-preview", "kimi-k2.5"):
+            eb, _ = p.build_api_kwargs_extras(
+                reasoning_config={"enabled": True}, model=model
+            )
+            assert eb["thinking"] == {"type": "enabled"}
+            assert "keep" not in eb["thinking"]
 
 
 class TestBaseProfile:

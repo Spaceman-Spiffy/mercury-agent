@@ -14,18 +14,42 @@ from providers.base import OMIT_TEMPERATURE, ProviderProfile
 
 
 class KimiProfile(ProviderProfile):
-    """Kimi/Moonshot — temperature omitted, thinking + reasoning_effort."""
+    """Kimi/Moonshot — temperature omitted, thinking + reasoning_effort.
+
+    Thinking-capable models (k2.6 and the k2-thinking line) also receive
+    ``thinking.keep="all"`` so the server preserves historical
+    ``reasoning_content`` across multi-turn conversations ("Preserved
+    Thinking", per https://platform.kimi.ai/docs/guide/use-kimi-k2-thinking-model).
+    Unlike the Nous portal — which silently drops the parameter — the direct
+    Moonshot endpoint honors it (verified by token-accounting probe: keep="all"
+    ingests historical reasoning, keep omitted strips it).
+    """
+
+    @staticmethod
+    def _supports_preserved_thinking(model: str | None) -> bool:
+        """True for Kimi models that accept thinking.keep (k2.6 / k2-thinking)."""
+        if not model:
+            return False
+        m = model.lower()
+        return "k2.6" in m or "k2-thinking" in m or "thinking" in m
 
     def build_api_kwargs_extras(
-        self, *, reasoning_config: dict | None = None, **context
+        self,
+        *,
+        reasoning_config: dict | None = None,
+        model: str | None = None,
+        **context,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Kimi uses extra_body.thinking + top-level reasoning_effort."""
         extra_body = {}
         top_level = {}
+        keep_thinking = self._supports_preserved_thinking(model)
 
         if not reasoning_config or not isinstance(reasoning_config, dict):
             # No config → thinking enabled, default effort
             extra_body["thinking"] = {"type": "enabled"}
+            if keep_thinking:
+                extra_body["thinking"]["keep"] = "all"
             top_level["reasoning_effort"] = "medium"
             return extra_body, top_level
 
@@ -36,6 +60,8 @@ class KimiProfile(ProviderProfile):
 
         # Enabled
         extra_body["thinking"] = {"type": "enabled"}
+        if keep_thinking:
+            extra_body["thinking"]["keep"] = "all"
         effort = (reasoning_config.get("effort") or "").strip().lower()
         if effort in {"low", "medium", "high"}:
             top_level["reasoning_effort"] = effort

@@ -10,22 +10,19 @@ from providers.base import ProviderProfile
 class NousProfile(ProviderProfile):
     """Nous Portal — product tags, reasoning with Nous-specific omission.
 
-    When the active model is a Kimi-family variant, injects
-    ``extra_body["thinking"]["keep"] = "all"`` so historical
-    ``reasoning_content`` is preserved across multi-turn conversations.
+    Note: the Nous portal does NOT honor Kimi's ``thinking.keep`` parameter —
+    a token-accounting probe (2026-06-06) showed the portal strips ALL inbound
+    assistant ``reasoning_content`` / ``reasoning_details`` regardless of the
+    flag (prompt_tokens identical with keep="all" vs omitted, and far below the
+    reasoning-blob size). Preserved Thinking therefore lives on the
+    Moonshot-direct ``kimi-coding`` provider, not here. Do not re-add a
+    ``thinking.keep`` injection to this profile — it is inert on this path.
     """
 
     def build_extra_body(
         self, *, session_id: str | None = None, **context
     ) -> dict[str, Any]:
         return {"tags": nous_portal_tags()}
-
-    @staticmethod
-    def _is_kimi_model(model: str | None) -> bool:
-        if not model:
-            return False
-        m = model.lower()
-        return "kimi" in m or "moonshot" in m
 
     def build_api_kwargs_extras(
         self,
@@ -35,11 +32,7 @@ class NousProfile(ProviderProfile):
         model: str | None = None,
         **context,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Nous: passes full reasoning_config, but OMITS when disabled.
-
-        Kimi-family models also receive ``thinking.keep="all"`` so
-        reasoning is preserved across turns.
-        """
+        """Nous: passes full reasoning_config, but OMITS when disabled."""
         extra_body = {}
         if supports_reasoning:
             if reasoning_config is not None:
@@ -50,14 +43,6 @@ class NousProfile(ProviderProfile):
                     extra_body["reasoning"] = rc
             else:
                 extra_body["reasoning"] = {"enabled": True, "effort": "medium"}
-
-        # Kimi via Nous portal: preserve reasoning across multi-turn conversations
-        if self._is_kimi_model(model):
-            _thinking = extra_body.get("thinking")
-            if isinstance(_thinking, dict):
-                _thinking["keep"] = "all"
-            else:
-                extra_body["thinking"] = {"keep": "all"}
 
         return extra_body, {}
 
@@ -73,7 +58,7 @@ nous = NousProfile(
         "hermes-3-405b",
         "hermes-3-70b",
     ),
-    base_url="https://inference.nousresearch.com/v1",
+    base_url="https://inference-api.nousresearch.com/v1",
     auth_type="oauth_device_code",
 )
 

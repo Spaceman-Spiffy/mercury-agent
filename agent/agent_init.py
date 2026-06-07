@@ -1173,13 +1173,30 @@ def init_agent(
     # Respect the platform's enabled_toolsets configuration (#5544):
     #   enabled_toolsets is None        → no filter, inject (backward compat)
     #   "memory" in enabled_toolsets    → user opted in, inject
+    #   memory tool already on surface  → user enabled memory via a named
+    #                                     bundle (e.g. "hermes-cli", whose
+    #                                     _HERMES_CORE_TOOLS includes "memory");
+    #                                     enabled_toolsets holds BUNDLE names,
+    #                                     not individual tool names, so the
+    #                                     literal "memory" membership check
+    #                                     misses these sessions and the memory
+    #                                     provider schemas (hindsight_*, etc.)
+    #                                     never reach the tool surface. Detect
+    #                                     the resolved tool instead.
     #   otherwise (incl. [])            → user excluded memory, skip injection
     #
     # Without this gate, `platform_toolsets: telegram: []` still leaks memory
     # provider tools (fact_store, etc.) into the tool surface — a 10x latency
     # penalty on local models and a frequent trigger of tool-call loops.
+    _memory_tool_on_surface = bool(agent.tools) and any(
+        isinstance(t, dict)
+        and t.get("function", {}).get("name") == "memory"
+        for t in agent.tools
+    )
     if agent._memory_manager and agent.tools is not None and (
-        agent.enabled_toolsets is None or "memory" in agent.enabled_toolsets
+        agent.enabled_toolsets is None
+        or "memory" in agent.enabled_toolsets
+        or _memory_tool_on_surface
     ):
         _existing_tool_names = {
             t.get("function", {}).get("name")

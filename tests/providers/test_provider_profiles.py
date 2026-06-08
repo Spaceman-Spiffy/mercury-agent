@@ -331,11 +331,11 @@ class TestKimiCodingProfile:
     def test_k26_injects_thinking_keep_all(self):
         p = get_provider_profile("kimi-coding")
         eb, tl = p.build_api_kwargs_extras(
-            reasoning_config={"enabled": True, "effort": "medium"},
+            reasoning_config={"enabled": True},
             model="kimi-k2.6",
         )
         assert eb["thinking"] == {"type": "enabled", "keep": "all"}
-        assert tl["reasoning_effort"] == "medium"
+        assert "reasoning_effort" not in tl
 
     def test_k26_no_config_still_keeps(self):
         p = get_provider_profile("kimi-coding")

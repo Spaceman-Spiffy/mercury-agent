@@ -193,6 +193,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "response_label": " ⚕ Hermes ",
             "prompt_symbol": "❯",
             "help_header": "(^_^)? Available Commands",
+            "icon": "⚕",
         },
         "tool_prefix": "┊",
     },
@@ -840,6 +841,24 @@ def get_active_goodbye(fallback: str = "Goodbye! ⚕") -> str:
         return get_active_skin().get_branding("goodbye", fallback)
     except Exception:
         return fallback
+
+
+
+def get_active_icon(fallback: str = "⚕") -> str:
+    """Get the brand icon glyph from the active skin.
+
+    Skins store ``icon`` as a bare single-cell glyph (no padding). Callers
+    add their own surrounding whitespace. Falls back to the stock caduceus
+    so skins without an ``icon`` key are unaffected.
+    """
+    try:
+        raw = get_active_skin().get_branding("icon", fallback)
+    except Exception:
+        raw = fallback
+
+    cleaned = (raw or fallback).strip()
+
+    return cleaned or fallback.strip() or "⚕"
 
 
 

@@ -74,7 +74,9 @@ def test_show_session_status_prints_gateway_style_summary():
         cli_obj._show_session_status()
 
     printed = "\n".join(str(call.args[0]) for call in cli_obj.console.print.call_args_list)
-    assert "Hermes CLI Status" in printed
+    from hermes_cli.skin_engine import get_active_skin
+    _agent_name = get_active_skin().get_branding("agent_name", "Hermes")
+    assert f"{_agent_name} CLI Status" in printed
     assert "Session ID: session-123" in printed
     assert "Path: ~/.hermes" in printed
     assert "Title: My titled session" in printed

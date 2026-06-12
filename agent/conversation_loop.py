@@ -368,6 +368,33 @@ def _get_continuation_prompt(is_partial_stub: bool, dropped_tools: Optional[List
         )
 
 
+def _reasoning_has_visible_text(assistant_message: Any) -> bool:
+    """Return True when the message's structured reasoning carries readable text.
+
+    Distinguishes genuine reasoning text (prefillable — the model can see its
+    own thinking on the next call and continue) from hidden/withheld thinking
+    where the API returns only signature or encrypted payloads with empty
+    text.  Observed with Anthropic adaptive thinking when ``display`` resolves
+    to ``omitted`` (e.g. claude-fable-5 thinking by default with no thinking
+    param sent): each ``reasoning_details`` block has ``thinking == ""`` and a
+    non-empty ``signature``.  Prefilling such blocks back is futile and loops.
+    """
+    for attr in ("reasoning", "reasoning_content"):
+        value = getattr(assistant_message, attr, None)
+        if isinstance(value, str) and value.strip():
+            return True
+    details = getattr(assistant_message, "reasoning_details", None)
+    if isinstance(details, list):
+        for block in details:
+            if not isinstance(block, dict):
+                continue
+            for key in ("thinking", "text", "summary"):
+                text = block.get(key)
+                if isinstance(text, str) and text.strip():
+                    return True
+    return False
+
+
 def run_conversation(
     agent,
     user_message: str,
@@ -3715,6 +3742,7 @@ def run_conversation(
                 # flag so it can fire again if the model goes empty on
                 # a LATER tool round.
                 agent._post_tool_empty_retried = False
+                agent._hidden_thinking_nudged = False
 
                 messages.append(assistant_msg)
                 agent._emit_interim_assistant_message(assistant_msg)
@@ -3975,7 +4003,63 @@ def run_conversation(
                         or getattr(assistant_message, "reasoning_details", None)
                         or _has_inline_thinking
                     )
-                    if _has_structured and agent._thinking_prefill_retries < 2:
+                    _has_visible_reasoning = (
+                        _has_inline_thinking
+                        or _reasoning_has_visible_text(assistant_message)
+                    )
+                    if (
+                        _has_structured
+                        and not _has_visible_reasoning
+                        and not getattr(agent, "_hidden_thinking_nudged", False)
+                    ):
+                        # Hidden/withheld thinking: the reasoning fields carry
+                        # only signature/encrypted payloads with no readable
+                        # text (e.g. Anthropic adaptive thinking with
+                        # display="omitted" — observed on claude-fable-5 when
+                        # no thinking param is sent).  Prefilling the model's
+                        # own reasoning back is futile — there is no text for
+                        # it to see, so it re-emits hidden thinking and the
+                        # prefill loop burns 2 calls + 3 retries at full
+                        # context cost.  Use the synthetic-user nudge instead
+                        # (the post-tool-empty recovery mechanism), which
+                        # changes the model's input and reliably elicits text.
+                        agent._hidden_thinking_nudged = True
+                        logger.info(
+                            "Thinking-only response with no visible reasoning "
+                            "text (hidden thinking) — nudging instead of "
+                            "prefilling (model=%s)", agent.model,
+                        )
+                        agent._buffer_status(
+                            "↻ Hidden-thinking-only response — nudging model "
+                            "to continue"
+                        )
+                        # Keep the message sequence valid:
+                        #   assistant("(empty)") → user(nudge)
+                        # Both marked synthetic so _persist_session strips
+                        # them if the turn ultimately fails.
+                        _nudge_msg = agent._build_assistant_message(
+                            assistant_message, finish_reason
+                        )
+                        _nudge_msg["content"] = "(empty)"
+                        _nudge_msg["_empty_recovery_synthetic"] = True
+                        messages.append(_nudge_msg)
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "Your previous response contained only "
+                                "internal reasoning with no visible output. "
+                                "Please provide your response text (and any "
+                                "tool calls) now."
+                            ),
+                            "_empty_recovery_synthetic": True,
+                        })
+                        agent._session_messages = messages
+                        continue
+                    if (
+                        _has_structured
+                        and _has_visible_reasoning
+                        and agent._thinking_prefill_retries < 2
+                    ):
                         agent._thinking_prefill_retries += 1
                         logger.info(
                             "Thinking-only response (no visible content) — "
@@ -4008,7 +4092,15 @@ def run_conversation(
                     ).strip()
                     _prefill_exhausted = (
                         _has_structured
-                        and agent._thinking_prefill_retries >= 2
+                        and (
+                            agent._thinking_prefill_retries >= 2
+                            or (
+                                not _has_visible_reasoning
+                                and getattr(
+                                    agent, "_hidden_thinking_nudged", False
+                                )
+                            )
+                        )
                     )
                     if _truly_empty and (not _has_structured or _prefill_exhausted) and agent._empty_content_retries < 3:
                         agent._empty_content_retries += 1
@@ -4103,6 +4195,7 @@ def run_conversation(
                 # Reset retry counter/signature on successful content
                 agent._empty_content_retries = 0
                 agent._thinking_prefill_retries = 0
+                agent._hidden_thinking_nudged = False
                 # Successful content reached — drop any buffered retry
                 # status from earlier failed attempts in this turn.
                 agent._clear_status_buffer()

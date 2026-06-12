@@ -13905,10 +13905,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         # Some Matrix clients render the streaming cursor
                         # as a visible tofu/white-box artifact.  Keep
                         # streaming text on Matrix, but suppress the cursor.
+                        # NOTE (Mercury fork, 2026-06-12): _buffer_only stays
+                        # False for Matrix — upstream d38b73fa5 set it True,
+                        # which contradicts the comment above and disables
+                        # interval-based mid-stream edits entirely (only
+                        # done/segment-break flushes). Cursor suppression
+                        # alone is the intended Matrix special-case.
                         _buffer_only = False
                         if source.platform == Platform.MATRIX:
                             _effective_cursor = ""
-                            _buffer_only = True
                         # Fresh-final applies to Telegram only — other
                         # platforms either edit in place cheaply or don't
                         # have the edit-timestamp-stays-stale problem.

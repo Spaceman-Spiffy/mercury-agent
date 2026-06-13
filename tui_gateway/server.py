@@ -4787,7 +4787,7 @@ def _(rid, params: dict) -> dict:
 
             from agent.account_usage import (
                 fetch_account_usage,
-                render_account_usage_lines,
+                render_account_usage_block,
             )
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
@@ -4797,7 +4797,7 @@ def _(rid, params: dict) -> dict:
                     base_url=base_url,
                     api_key=api_key,
                 ).result(timeout=10.0)
-            account_lines = render_account_usage_lines(snap)
+            account_lines = render_account_usage_block(snap)
             if account_lines:
                 usage["account_lines"] = account_lines
         except Exception:

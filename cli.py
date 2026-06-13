@@ -8359,7 +8359,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         base_url = getattr(agent, "base_url", None) or getattr(self, "base_url", None)
         api_key = getattr(agent, "api_key", None) or getattr(self, "api_key", None)
         # Lazy import — pulls the OpenAI SDK chain, only needed here.
-        from agent.account_usage import fetch_account_usage, render_account_usage_lines
+        from agent.account_usage import fetch_account_usage, render_account_usage_block
         account_snapshot = None
         if provider:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
@@ -8370,7 +8370,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                     ).result(timeout=10.0)
                 except (concurrent.futures.TimeoutError, Exception):
                     account_snapshot = None
-        account_lines = [f"  {line}" for line in render_account_usage_lines(account_snapshot)]
+        account_lines = [f"  {line}" for line in render_account_usage_block(account_snapshot)]
         if account_lines:
             print()
             for line in account_lines:

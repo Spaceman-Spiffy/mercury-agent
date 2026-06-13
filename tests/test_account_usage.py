@@ -201,3 +201,90 @@ def test_fetch_account_usage_openrouter_omits_quota_window_when_key_has_no_limit
     assert snapshot.windows == ()
     assert "Credits balance: $74.50" in snapshot.details
     assert "API key usage: $25.50 total • $1.25 today • $4.50 this week • $18.00 this month" in snapshot.details
+
+
+def _anthropic_oauth_env(monkeypatch, payload):
+    """Wire the Anthropic OAuth usage fetch to a canned payload."""
+    monkeypatch.setattr(
+        "agent.account_usage.resolve_anthropic_token",
+        lambda: "oauth-token",
+    )
+    monkeypatch.setattr("agent.account_usage._is_oauth_token", lambda token: True)
+    monkeypatch.setattr(
+        "agent.account_usage.httpx.Client",
+        lambda timeout=15.0: _Client(payload),
+    )
+
+
+def test_fetch_anthropic_utilization_is_percent_not_fraction(monkeypatch):
+    """`utilization` is already a percentage (0–100); a 1.0 means 1%, not 100%.
+
+    Regression: the old parser did `util*100 if util <= 1 else util`, which
+    inflated any window sitting at <=1% (e.g. seven_day_sonnet=1.0) to 100%.
+    The Sonnet-only week showed 100% used while Claude Code showed 1%.
+    """
+    from agent.account_usage import fetch_account_usage
+
+    _anthropic_oauth_env(
+        monkeypatch,
+        {
+            "five_hour": {"utilization": 7.0, "resets_at": "2026-06-13T15:39:59+00:00"},
+            "seven_day": {"utilization": 5.0, "resets_at": "2026-06-15T10:59:59+00:00"},
+            "seven_day_opus": None,
+            "seven_day_sonnet": {"utilization": 1.0, "resets_at": "2026-06-15T10:59:59+00:00"},
+        },
+    )
+
+    snapshot = fetch_account_usage("anthropic")
+
+    assert snapshot is not None
+    by_label = {w.label: w.used_percent for w in snapshot.windows}
+    # The decisive assertion: 1.0 → 1%, NOT 100%.
+    assert by_label["Current week (Sonnet only)"] == 1.0
+    assert by_label["Current session"] == 7.0
+    assert by_label["Current week (all models)"] == 5.0
+    # Opus window is null in the payload and must be omitted, not zero-filled.
+    assert "Current week (Opus only)" not in by_label
+
+
+def test_render_account_usage_block_matches_claude_code_shape(monkeypatch):
+    """The rich block renders heading + bar + 'N% used' + reset, per window."""
+    from agent.account_usage import (
+        AccountUsageSnapshot,
+        AccountUsageWindow,
+        render_account_usage_block,
+    )
+
+    snapshot = AccountUsageSnapshot(
+        provider="anthropic",
+        source="oauth_usage_api",
+        fetched_at=datetime.now(timezone.utc),
+        windows=(
+            AccountUsageWindow(
+                label="Current week (Sonnet only)",
+                used_percent=1.0,
+                reset_at=datetime.now(timezone.utc),
+            ),
+        ),
+    )
+    block = render_account_usage_block(snapshot)
+
+    assert block[0] == "Current week (Sonnet only)"
+    # The gauge line carries the percentage and a bar made of block glyphs.
+    assert "1% used" in block[1]
+    assert ("█" in block[1]) or ("░" in block[1])
+    # A 1%-used 30-wide bar must be almost entirely empty (not full).
+    assert block[1].count("█") <= 1
+    assert any(line.startswith("Resets ") for line in block)
+
+
+def test_render_account_usage_block_empty_when_unavailable():
+    from agent.account_usage import AccountUsageSnapshot, render_account_usage_block
+
+    empty = AccountUsageSnapshot(
+        provider="anthropic",
+        source="oauth_usage_api",
+        fetched_at=datetime.now(timezone.utc),
+    )
+    assert render_account_usage_block(empty) == []
+    assert render_account_usage_block(None) == []

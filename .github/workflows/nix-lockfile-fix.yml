@@ -42,7 +42,13 @@ jobs:
   #   4. Uses a GitHub App token (not GITHUB_TOKEN) so the fix commit
   #      triggers downstream nix.yml verification.
   auto-fix-main:
-    if: github.event_name == 'push'
+    # Mercury fork: skip on forks. The job needs secrets.APP_ID /
+    # secrets.APP_PRIVATE_KEY (a GitHub App) which exist only on the
+    # upstream NousResearch/hermes-agent repo; without them the first
+    # step errors. The fork does not maintain Nix lockfile hashes for
+    # its own builds, so disabling here is correct. Upstream behavior
+    # is unchanged — file stays compatible for syncs.
+    if: github.event.repository.fork == false
     runs-on: ubuntu-latest
     timeout-minutes: 25
     concurrency:

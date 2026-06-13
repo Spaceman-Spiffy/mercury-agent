@@ -120,6 +120,100 @@ def render_account_usage_lines(snapshot: Optional[AccountUsageSnapshot], *, mark
     return lines
 
 
+def _local_iana_zone() -> Optional[str]:
+    """Best-effort IANA zone key (e.g. 'America/New_York') for the local tz.
+
+    Claude Code renders the IANA key, not the abbreviation. Python's
+    ``datetime.astimezone()`` produces a fixed-offset tz with no key, so resolve
+    it from the environment / system config. Fail-open → None (caller falls back
+    to the tz abbreviation).
+    """
+    import os
+
+    tz_env = (os.environ.get("TZ") or "").strip()
+    if tz_env and "/" in tz_env:
+        return tz_env
+    # Linux: /etc/localtime is a symlink into the zoneinfo tree.
+    try:
+        link = os.readlink("/etc/localtime")
+        marker = "zoneinfo/"
+        if marker in link:
+            return link.split(marker, 1)[1]
+    except OSError:
+        pass
+    # Debian/Ubuntu also keep the bare zone name here.
+    try:
+        with open("/etc/timezone", encoding="utf-8") as fh:
+            name = fh.read().strip()
+        if "/" in name:
+            return name
+    except OSError:
+        pass
+    return None
+
+
+def _format_reset_clock(dt: Optional[datetime]) -> str:
+    """Claude-Code-style absolute reset, e.g. 'Resets 11:40am (America/New_York)'.
+
+    Uses the local timezone (matching how Claude Code renders it). Falls back to
+    the tz abbreviation when the IANA key is not resolvable.
+    """
+    if not dt:
+        return "Resets unknown"
+    local_dt = dt.astimezone()
+    clock = local_dt.strftime("%I:%M%p").lstrip("0").lower()
+    # Same-day windows (the 5-hour session) show only the clock; multi-day
+    # windows (the weeklies) also show the date so the reset is unambiguous.
+    now_local = _utc_now().astimezone()
+    if local_dt.date() != now_local.date():
+        clock = local_dt.strftime("%b ") + local_dt.strftime("%d").lstrip("0") + ", " + clock
+    label = _local_iana_zone() or local_dt.tzname() or ""
+    return f"Resets {clock} ({label})" if label else f"Resets {clock}"
+
+
+def _usage_bar(used_percent: float, width: int = 30) -> str:
+    """A Claude-Code-style horizontal gauge: filled vs empty blocks."""
+    pct = max(0.0, min(100.0, float(used_percent)))
+    filled = int(round((pct / 100.0) * width))
+    return "█" * filled + "░" * (width - filled)
+
+
+def render_account_usage_block(snapshot: Optional[AccountUsageSnapshot]) -> list[str]:
+    """Rich, multi-line Claude-Code-style account-usage view (terminal surfaces).
+
+    Each rate-limit window renders as a heading, a progress bar with a right-
+    aligned ``N% used`` figure, and an absolute reset line — mirroring the
+    ``/usage`` panel in Claude Code's CLI. Used by the TUI and CLI; the gateway
+    keeps the compact one-liner from ``render_account_usage_lines`` because
+    messaging surfaces have no fixed-width canvas for bars.
+
+    Fail-open: returns [] for an empty/unavailable snapshot so callers show
+    nothing rather than an error.
+    """
+    if not snapshot or not snapshot.available:
+        return []
+    lines: list[str] = []
+    bar_width = 30
+    for window in snapshot.windows:
+        if window.used_percent is None:
+            continue
+        used = max(0, round(float(window.used_percent)))
+        lines.append(window.label)
+        bar = _usage_bar(window.used_percent, bar_width)
+        lines.append(f"{bar}  {used}% used")
+        if window.reset_at:
+            lines.append(_format_reset_clock(window.reset_at))
+        elif window.detail:
+            lines.append(window.detail)
+        lines.append("")
+    for detail in snapshot.details:
+        lines.append(detail)
+    # Drop a single trailing blank separator left by the last window.
+    while lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def _fmt_usd(d: float) -> str:
     return f"${d:,.2f}"
 
@@ -507,22 +601,25 @@ def _fetch_anthropic_account_usage() -> Optional[AccountUsageSnapshot]:
         response.raise_for_status()
     payload = response.json() or {}
     windows: list[AccountUsageWindow] = []
+    # Labels mirror Claude Code's /usage view. `utilization` is a PERCENTAGE
+    # already (0–100): the live API returns e.g. five_hour=7.0 (7%),
+    # seven_day_sonnet=1.0 (1%). Do NOT treat values <= 1 as a 0–1 fraction —
+    # that inflated any window sitting at <=1% to 100% (the Sonnet-week bug).
     mapping = (
         ("five_hour", "Current session"),
-        ("seven_day", "Current week"),
-        ("seven_day_opus", "Opus week"),
-        ("seven_day_sonnet", "Sonnet week"),
+        ("seven_day", "Current week (all models)"),
+        ("seven_day_opus", "Current week (Opus only)"),
+        ("seven_day_sonnet", "Current week (Sonnet only)"),
     )
     for key, label in mapping:
         window = payload.get(key) or {}
         util = window.get("utilization")
         if util is None:
             continue
-        used = float(util) * 100 if float(util) <= 1 else float(util)
         windows.append(
             AccountUsageWindow(
                 label=label,
-                used_percent=used,
+                used_percent=float(util),
                 reset_at=_parse_dt(window.get("resets_at")),
             )
         )

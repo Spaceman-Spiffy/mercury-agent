@@ -7306,8 +7306,8 @@ def test_session_usage_includes_account_lines(monkeypatch):
 
     monkeypatch.setattr("agent.account_usage.fetch_account_usage", _fake_fetch)
     monkeypatch.setattr(
-        "agent.account_usage.render_account_usage_lines",
-        lambda snap, **_kw: ["📈 Account limits", "Current session: 98% remaining (2% used)"],
+        "agent.account_usage.render_account_usage_block",
+        lambda snap, **_kw: ["Current session", "░░░░  2% used", "Resets 11:40am (America/New_York)"],
     )
     # Keep the Nous credits portal path out of this test — it is exercised
     # elsewhere and would otherwise make a live portal call.
@@ -7321,8 +7321,9 @@ def test_session_usage_includes_account_lines(monkeypatch):
     assert "result" in resp, resp
     assert captured["provider"] == "anthropic"
     assert resp["result"]["account_lines"] == [
-        "📈 Account limits",
-        "Current session: 98% remaining (2% used)",
+        "Current session",
+        "░░░░  2% used",
+        "Resets 11:40am (America/New_York)",
     ]
 
 

@@ -239,14 +239,16 @@ function normalizeAnsiForeground(color: string): string {
 
 // ── Defaults ─────────────────────────────────────────────────────────
 
+// Mercury fork: compiled-in defaults mirror the mercury skin's branding so the
+// pre-skin first frame is indistinguishable from the post-skin repaint.
 const BRAND: ThemeBrand = {
-  name: 'Hermes Agent',
+  name: 'Mercury',
   icon: '☿',
   prompt: '❯',
-  welcome: 'Type your message or /help for commands.',
-  goodbye: 'Goodbye! ⚕',
-  tool: '┊',
-  helpHeader: '(^_^)? Commands'
+  welcome: 'Mercury ready. Type your message or /help for commands.',
+  goodbye: 'Goodbye.',
+  tool: '│',
+  helpHeader: 'Available Commands'
 }
 
 const cleanPromptSymbol = (s: string | undefined, fallback: string) => {
@@ -257,42 +259,40 @@ const cleanPromptSymbol = (s: string | undefined, fallback: string) => {
   return cleaned || fallback
 }
 
+// Mercury fork: DARK_THEME carries the exact values fromSkin() computes from
+// the mercury skin, so the pre-skin first frame matches the post-skin repaint
+// (no gold flash). Semantic ok/error/warn stay conventional.
 export const DARK_THEME: Theme = {
   color: {
-    primary: '#FFD700',
-    accent: '#FFBF00',
-    border: '#CD7F32',
-    text: '#FFF8DC',
-    muted: '#CC9B1F',
-    // Bumped from the old `#B8860B` darkgoldenrod (~53% luminance) which
-    // read as barely-visible on dark terminals for long body text.  The
-    // new value sits ~60% luminance — readable without losing the "muted /
-    // secondary" semantic.  Field labels still use `label` (65%) which
-    // stays brighter so hierarchy holds.
+    primary: '#F5F7FA',
+    accent: '#9FB6C9',
+    border: '#6E7681',
+    text: '#D6DBE1',
+    muted: '#4A4F57',
     completionBg: '#1a1a2e',
-    completionCurrentBg: '#333355',
+    completionCurrentBg: '#3f4254',
     completionMetaBg: '#1a1a2e',
-    completionMetaCurrentBg: '#333355',
+    completionMetaCurrentBg: '#3f4254',
 
-    label: '#DAA520',
+    label: '#AEB9C7',
     ok: '#4caf50',
     error: '#ef5350',
     warn: '#ffa726',
 
-    prompt: '#FFF8DC',
+    prompt: '#E6EBF0',
     // sessionLabel/sessionBorder intentionally track the `dim` value — they
     // are "same role, same colour" by design.  fromSkin's banner_dim fallback
     // relies on this pairing (#11300).
-    sessionLabel: '#CC9B1F',
-    sessionBorder: '#CC9B1F',
+    sessionLabel: '#4A4F57',
+    sessionBorder: '#4A4F57',
 
     statusBg: '#1a1a2e',
     statusFg: '#C0C0C0',
-    statusGood: '#8FBC8F',
-    statusWarn: '#FFD700',
+    statusGood: '#4caf50',
+    statusWarn: '#ffa726',
     statusBad: '#FF8C00',
     statusCritical: '#FF6B6B',
-    selectionBg: '#3a3a55',
+    selectionBg: '#3f4254',
 
     diffAdded: 'rgb(220,255,220)',
     diffRemoved: 'rgb(255,220,220)',

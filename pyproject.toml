@@ -158,13 +158,14 @@ pty = [
   # without pulling in extra packages.
 ]
 honcho = ["honcho-ai==2.0.1"]
-# Holographic memory provider — optional dense-embedding (Hybrid-Full) signal.
-# CPU-only by design (the workload is one query + a few hundred short facts;
-# GPU/CUDA/ROCm would bloat the install for no speedup at this scale). Install
-# torch's CPU wheel separately first: `uv pip install torch --torch-backend cpu`.
-# Lazily imported in plugins/memory/holographic/embedding.py — absent install
-# degrades cleanly to FTS5+Jaccard+HRR retrieval, never an error.
-memory-embeddings = ["sentence-transformers>=5.5,<6"]
+# NOTE: the former `memory-embeddings` extra (sentence-transformers for the
+# holographic store's dense Hybrid-Full signal) was REMOVED 2026-06-12: the
+# live memory provider is hindsight (cloud) and the extra was the source of
+# uv.lock drift breaking CI (`uv sync --locked`). The holographic code path
+# still degrades cleanly to FTS5+Jaccard+HRR without it; to use dense
+# embeddings again, install manually:
+#   uv pip install torch --torch-backend cpu
+#   uv pip install 'sentence-transformers>=5.5,<6'
 # Image resize recovery for the vision tools. Pillow is now a CORE dependency
 # (see the main `dependencies` list) since the byte/pixel shrink paths are on
 # the default vision-embed path and the mid-session lazy install deadlocked the

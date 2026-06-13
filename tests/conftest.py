@@ -359,6 +359,26 @@ def _hermetic_environment(tmp_path, monkeypatch):
     (fake_hermes_home / "skills").mkdir()
     monkeypatch.setenv("HERMES_HOME", str(fake_hermes_home))
 
+    # 3b. Re-bind hermes_state.DEFAULT_DB_PATH to the per-test tempdir.
+    #
+    #     Setting HERMES_HOME above is NOT sufficient on its own:
+    #     ``hermes_state.DEFAULT_DB_PATH = get_hermes_home() / "state.db"``
+    #     is evaluated ONCE at import time, before any fixture runs, so the
+    #     module constant is frozen to the developer's real ~/.hermes.
+    #     ``SessionDB.__init__`` falls back to that constant whenever a test
+    #     constructs ``SessionDB()`` / ``SessionStore()`` with no explicit
+    #     db_path — which silently writes test fixtures (e.g. synthetic
+    #     telegram/u1 reset sessions) into the production state.db. Re-point
+    #     the already-bound constant at the tempdir so the env redirect
+    #     actually takes effect. monkeypatch.setattr auto-reverts per test.
+    try:
+        import hermes_state as _hermes_state
+        monkeypatch.setattr(
+            _hermes_state, "DEFAULT_DB_PATH", fake_hermes_home / "state.db"
+        )
+    except Exception:
+        pass
+
     # 4. Deterministic locale / timezone / hashseed. CI runs in UTC with
     #    C.UTF-8 locale; local dev often doesn't. Pin everything.
     monkeypatch.setenv("TZ", "UTC")

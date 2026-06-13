@@ -4,7 +4,7 @@
 
 # Mercury Agent ☿
 <p align="center">
-  <b>Mercury</b> — a personal fork of <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>, rebranded as the Roman messenger: quicksilver silver-steel skin, Mercury identity across CLI, TUI, and gateway.
+  <b>Mercury</b> — a personal fork of <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>, rebranded as the Roman messenger.
 </p>
 <p align="center">
   <a href="https://hermes-agent.nousresearch.com/">Hermes Agent (upstream)</a> | <a href="https://hermes-agent.nousresearch.com/">Hermes Desktop</a>

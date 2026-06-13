@@ -549,6 +549,16 @@ export const sessionCommands: SlashCommand[] = [
           })
         }
 
+        // Account limits (provider account: Anthropic OAuth / Codex / OpenRouter)
+        // and the Nous credits block are both agent-independent — they show even
+        // with zero API calls or on a resumed session. Render account limits
+        // first (matching the CLI / gateway order), then credits, before the
+        // token panel.
+        const accountLines = r?.account_lines ?? []
+        if (accountLines.length) {
+          ctx.transcript.panel('Account limits', [{ text: accountLines.join('\n') }])
+        }
+
         // Nous credits block is agent-independent (a portal fetch), so it shows
         // even with zero API calls or on a resumed session. Render it whenever
         // present, before the token panel.
@@ -558,7 +568,7 @@ export const sessionCommands: SlashCommand[] = [
         }
 
         if (!r?.calls) {
-          if (!creditsLines.length) {
+          if (!creditsLines.length && !accountLines.length) {
             ctx.transcript.sys('no API calls yet')
           }
           return

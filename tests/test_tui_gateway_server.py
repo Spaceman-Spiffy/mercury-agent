@@ -7206,3 +7206,77 @@ def test_reap_idle_sessions_closes_only_evictable(monkeypatch):
         assert closed == [("stale", "idle_timeout")]
     finally:
         server._sessions.clear()
+
+
+class _UsageAgent:
+    """Minimal agent stub for the session.usage RPC account-limits path."""
+
+    provider = "anthropic"
+    base_url = None
+    api_key = None
+    model = "claude-sonnet-4-6"
+    session_api_calls = 0
+    session_input_tokens = 0
+    session_output_tokens = 0
+    session_total_tokens = 0
+    context_compressor = None
+
+
+def test_session_usage_includes_account_lines(monkeypatch):
+    """`session.usage` must surface the provider account-limits block.
+
+    Regression: the TUI RPC handler previously attached only the Nous credits
+    block, so /usage in the TUI never showed Anthropic/Codex/OpenRouter account
+    limits even though the CLI `_show_usage` and the gateway
+    `_handle_usage_command` both render them. This pins the parity: when a
+    provider is resolvable, the rendered account lines ride the RPC result.
+    """
+    sid = "usage-account-sid"
+    server._sessions[sid] = {"agent": _UsageAgent(), "session_key": sid}
+
+    captured = {}
+
+    def _fake_fetch(provider, *, base_url=None, api_key=None):
+        captured["provider"] = provider
+        return object()  # opaque snapshot; renderer is also stubbed
+
+    monkeypatch.setattr("agent.account_usage.fetch_account_usage", _fake_fetch)
+    monkeypatch.setattr(
+        "agent.account_usage.render_account_usage_lines",
+        lambda snap, **_kw: ["📈 Account limits", "Current session: 98% remaining (2% used)"],
+    )
+    # Keep the Nous credits portal path out of this test — it is exercised
+    # elsewhere and would otherwise make a live portal call.
+    monkeypatch.setattr("agent.account_usage.nous_credits_lines", lambda *a, **k: [])
+
+    try:
+        resp = server._methods["session.usage"]("r1", {"session_id": sid})
+    finally:
+        server._sessions.pop(sid, None)
+
+    assert "result" in resp, resp
+    assert captured["provider"] == "anthropic"
+    assert resp["result"]["account_lines"] == [
+        "📈 Account limits",
+        "Current session: 98% remaining (2% used)",
+    ]
+
+
+def test_session_usage_account_lines_fail_open(monkeypatch):
+    """A provider fetch error must never break session.usage (fail-open)."""
+    sid = "usage-account-failopen-sid"
+    server._sessions[sid] = {"agent": _UsageAgent(), "session_key": sid}
+
+    def _boom(provider, *, base_url=None, api_key=None):
+        raise RuntimeError("provider API down")
+
+    monkeypatch.setattr("agent.account_usage.fetch_account_usage", _boom)
+    monkeypatch.setattr("agent.account_usage.nous_credits_lines", lambda *a, **k: [])
+
+    try:
+        resp = server._methods["session.usage"]("r1", {"session_id": sid})
+    finally:
+        server._sessions.pop(sid, None)
+
+    assert "result" in resp, resp
+    assert "account_lines" not in resp["result"]

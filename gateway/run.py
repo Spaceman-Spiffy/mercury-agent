@@ -11952,6 +11952,36 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         return True
 
+    def _transform_gateway_notice(
+        self, text: str, *, kind: str, platform: str = ""
+    ) -> str:
+        """Apply the transform_gateway_notice plugin hook to a lifecycle notice.
+
+        Single consolidation point for the gateway's own system messages
+        (restart / online / long-run). These never pass through the per-turn
+        ``transform_llm_output`` path, so a cosmetic output filter (e.g. a
+        brand-word substitution) would otherwise miss them. Both notice
+        producers route their text through here immediately before send.
+
+        First non-empty string returned by any plugin wins; on no hook,
+        empty return, or any error the original text is returned unchanged
+        (fail-safe — a hook bug can never block a lifecycle notice).
+        """
+        try:
+            from hermes_cli.plugins import invoke_hook as _invoke_hook
+            results = _invoke_hook(
+                "transform_gateway_notice",
+                text=text,
+                kind=kind,
+                platform=platform,
+            )
+            for r in results:
+                if isinstance(r, str) and r:
+                    return r
+        except Exception:
+            logger.debug("transform_gateway_notice hook failed", exc_info=True)
+        return text
+
     async def _send_restart_notification(self) -> Optional[tuple[str, str, Optional[str]]]:
         """Notify the chat that initiated /restart that the gateway is back."""
         notify_path = _hermes_home / ".restart_notify.json"
@@ -11996,7 +12026,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             )
             result = await adapter.send(
                 str(chat_id),
-                "♻ Gateway restarted successfully. Your session continues.",
+                self._transform_gateway_notice(
+                    "♻ Gateway restarted successfully. Your session continues.",
+                    kind="restart",
+                    platform=platform_str,
+                ),
                 metadata=metadata,
             )
             # adapter.send() catches provider errors (e.g. "Chat not found")
@@ -12063,10 +12097,13 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     home.thread_id,
                     adapter=adapter,
                 )
+                notice = self._transform_gateway_notice(
+                    message, kind="online", platform=platform.value
+                )
                 if metadata:
-                    result = await adapter.send(str(home.chat_id), message, metadata=metadata)
+                    result = await adapter.send(str(home.chat_id), notice, metadata=metadata)
                 else:
-                    result = await adapter.send(str(home.chat_id), message)
+                    result = await adapter.send(str(home.chat_id), notice)
                 if result is not None and getattr(result, "success", True) is False:
                     logger.warning(
                         "Home-channel startup notification failed for %s:%s: %s",

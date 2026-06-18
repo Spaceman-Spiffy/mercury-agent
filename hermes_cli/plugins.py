@@ -134,6 +134,14 @@ VALID_HOOKS: Set[str] = {
     # Plugins return a string to replace the response text, or None/empty to leave unchanged.
     # First non-None string wins. Useful for vocabulary/personality transformation.
     "transform_llm_output",
+    # Transform a gateway-originated lifecycle notice (restart / online /
+    # long-run) before it is sent to the chat. Plugins return a string to
+    # replace the notice text, or None/empty to leave unchanged; first
+    # non-empty string wins. Kwargs: text, kind, platform. Same cosmetic
+    # vocabulary/personality use as transform_llm_output, but for the
+    # gateway's own system messages (which never pass through the per-turn
+    # LLM-output path).
+    "transform_gateway_notice",
     "pre_llm_call",
     "post_llm_call",
     "pre_api_request",

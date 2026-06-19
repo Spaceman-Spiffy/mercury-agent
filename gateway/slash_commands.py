@@ -574,30 +574,6 @@ class GatewaySlashCommandsMixin:
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
         return f"sha256:{digest}"
 
-    def _gateway_session_origin_for_id(self, session_id: str) -> Optional[SessionSource]:
-        """Best-effort origin lookup for gateway session IDs."""
-        lookup = getattr(type(self.session_store), "lookup_by_session_id", None)
-        if callable(lookup):
-            entry = lookup(self.session_store, session_id)
-            return getattr(entry, "origin", None) if entry is not None else None
-
-        # Test doubles and older stores may not expose the public lookup helper.
-        # Keep the Matrix resume guard fail-closed if no origin can be resolved.
-        entries = getattr(self.session_store, "_entries", {}) or {}
-        for entry in entries.values():
-            if getattr(entry, "session_id", None) == session_id:
-                return getattr(entry, "origin", None)
-        return None
-
-    @staticmethod
-    def _same_matrix_room(current: SessionSource, origin: Optional[SessionSource]) -> bool:
-        return (
-            origin is not None
-            and origin.platform == Platform.MATRIX
-            and current.platform == Platform.MATRIX
-            and origin.chat_id == current.chat_id
-        )
-
     async def _handle_agents_command(self, event: MessageEvent) -> str:
         """Handle /agents command - list active agents and running tasks."""
         from gateway.run import _AGENT_PENDING_SENTINEL
@@ -2820,9 +2796,7 @@ class GatewaySlashCommandsMixin:
             parts = shlex.split(raw_args)
         except ValueError as exc:
             return t("gateway.resume.parse_error", error=exc)
-        allow_all = "--all" in parts
-        allow_cross_room = "--cross-room" in parts
-        name = " ".join(p for p in parts if p not in {"--all", "--cross-room"}).strip()
+        name = " ".join(parts).strip()
 
         # Strip common outer brackets/quotes users may type literally from the
         # usage hint (e.g. ``/resume <abc123>``). Mirrors the CLI behavior.
@@ -2843,24 +2817,11 @@ class GatewaySlashCommandsMixin:
             # List recent titled sessions for this user/platform
             try:
                 titled = _list_titled_sessions()
-                if source.platform == Platform.MATRIX and not allow_all:
-                    scoped = []
-                    for s in titled:
-                        origin = self._gateway_session_origin_for_id(str(s.get("id") or ""))
-                        if self._same_matrix_room(source, origin):
-                            scoped.append(s)
-                    titled = scoped
                 if not titled:
-                    if source.platform == Platform.MATRIX and not allow_all:
-                        return t("gateway.resume.matrix_no_named_sessions")
                     return t("gateway.resume.no_named_sessions")
                 lines = [t("gateway.resume.list_header")]
                 for idx, s in enumerate(titled[:10], start=1):
                     title = s["title"]
-                    if source.platform == Platform.MATRIX and allow_all:
-                        origin = self._gateway_session_origin_for_id(str(s.get("id") or ""))
-                        if origin:
-                            title = f"{title} — {origin.chat_name or origin.chat_id}"
                     preview = s.get("preview", "")[:40]
                     preview_part = t("gateway.resume.list_preview_suffix", preview=preview) if preview else ""
                     lines.append(t("gateway.resume.list_item_numbered", index=idx, title=title, preview_part=preview_part))
@@ -2874,13 +2835,6 @@ class GatewaySlashCommandsMixin:
         if name.isdigit():
             try:
                 titled = _list_titled_sessions()
-                if source.platform == Platform.MATRIX and not allow_all:
-                    scoped = []
-                    for s in titled:
-                        origin = self._gateway_session_origin_for_id(str(s.get("id") or ""))
-                        if self._same_matrix_room(source, origin):
-                            scoped.append(s)
-                    titled = scoped
             except Exception as e:
                 logger.debug("Failed to list titled sessions for numeric resume: %s", e)
                 return t("gateway.resume.list_failed", error=e)
@@ -2906,17 +2860,6 @@ class GatewaySlashCommandsMixin:
             target_id = self._session_db.resolve_resume_session_id(target_id)
         except Exception as e:
             logger.debug("Failed to resolve resume continuation for %s: %s", target_id, e)
-
-        if source.platform == Platform.MATRIX:
-            target_origin = self._gateway_session_origin_for_id(target_id)
-            if not self._same_matrix_room(source, target_origin) and not allow_cross_room:
-                if target_origin is None:
-                    return t("gateway.resume.matrix_blocked_no_origin", name=name)
-                return t(
-                    "gateway.resume.matrix_blocked_other_room",
-                    room=target_origin.chat_name or target_origin.chat_id,
-                    name=name,
-                )
 
         # Check if already on that session
         current_entry = self.session_store.get_or_create_session(source)
@@ -2947,13 +2890,6 @@ class GatewaySlashCommandsMixin:
         msg_count = len([m for m in history if m.get("role") == "user"]) if history else 0
         msg_part = f" ({msg_count} message{'s' if msg_count != 1 else ''})" if msg_count else ""
 
-        if source.platform == Platform.MATRIX and allow_cross_room:
-            return t(
-                "gateway.resume.matrix_cross_room_success",
-                title=title,
-                room=source.chat_name or source.chat_id,
-                msg_part=msg_part,
-            )
         if not msg_count:
             return t("gateway.resume.resumed_no_count", title=title)
         if msg_count == 1:
@@ -2993,13 +2929,6 @@ class GatewaySlashCommandsMixin:
             limit=10,
             exclude_sources=["tool"],
         )
-        if source.platform == Platform.MATRIX and not include_all:
-            rows = [
-                row for row in rows
-                if self._same_matrix_room(
-                    source, self._gateway_session_origin_for_id(str(row.get("id") or ""))
-                )
-            ]
         return format_gateway_session_listing(
             rows,
             include_source=include_all,

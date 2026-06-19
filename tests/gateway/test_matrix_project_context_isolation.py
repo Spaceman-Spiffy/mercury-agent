@@ -379,19 +379,24 @@ async def test_matrix_status_reports_current_matrix_room_scope():
 
 
 @pytest.mark.asyncio
-async def test_matrix_resume_does_not_cross_rooms_by_default():
+async def test_matrix_resume_crosses_rooms_by_default():
+    # Fork-local behavior (fix/matrix-sessions-room-scope): Matrix room
+    # isolation was removed so /resume reaches any session by title/ID
+    # regardless of originating room. A session named in another room now
+    # resumes here instead of being blocked.
     source_a = _make_matrix_source(PROJECT_A_ROOM_ID, PROJECT_A_NAME, PROJECT_A_TOPIC)
     source_b = _make_matrix_source(PROJECT_B_ROOM_ID, PROJECT_B_NAME, PROJECT_B_TOPIC)
     entry_a = _entry(source_a, "session-a", "Project A Plan")
     entry_b = _entry(source_b, "session-b", "Project B Plan")
     runner = _make_runner(source_b, [entry_a, entry_b])
+    runner.session_store.switch_session.return_value = entry_a
     runner._session_db.resolve_session_by_title.return_value = "session-a"
 
     result = await runner._handle_resume_command(_event("/resume Project A Plan", source_b))
 
-    assert "blocked" in result
-    assert PROJECT_A_NAME in result
-    runner.session_store.switch_session.assert_not_called()
+    assert "blocked" not in result
+    assert "Resumed session" in result
+    runner.session_store.switch_session.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -431,20 +436,24 @@ async def test_matrix_resume_quoted_title_same_room():
 
 
 @pytest.mark.asyncio
-async def test_matrix_resume_quoted_title_cross_room_blocked():
+async def test_matrix_resume_quoted_title_cross_room_allowed():
+    # Fork-local: cross-room resume is permitted; a quoted title from another
+    # room resolves and switches rather than being blocked.
     source_a = _make_matrix_source(PROJECT_A_ROOM_ID, PROJECT_A_NAME, PROJECT_A_TOPIC)
     source_b = _make_matrix_source(PROJECT_B_ROOM_ID, PROJECT_B_NAME, PROJECT_B_TOPIC)
     entry_a = _entry(source_a, "session-a", "Project A Plan")
     entry_b = _entry(source_b, "session-b", "Project B Plan")
     runner = _make_runner(source_b, [entry_a, entry_b])
+    runner.session_store.switch_session.return_value = entry_a
     runner._session_db.resolve_session_by_title.return_value = "session-a"
 
     result = await runner._handle_resume_command(
         _event('/resume "Project A Plan"', source_b)
     )
 
-    assert "blocked" in result
-    runner.session_store.switch_session.assert_not_called()
+    assert "blocked" not in result
+    runner._session_db.resolve_session_by_title.assert_called_once_with("Project A Plan")
+    runner.session_store.switch_session.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -461,26 +470,9 @@ async def test_matrix_resume_malformed_quote_returns_helpful_error():
 
 
 @pytest.mark.asyncio
-async def test_matrix_resume_cross_room_requires_explicit_flag_and_warns():
-    source_a = _make_matrix_source(PROJECT_A_ROOM_ID, PROJECT_A_NAME, PROJECT_A_TOPIC)
-    source_b = _make_matrix_source(PROJECT_B_ROOM_ID, PROJECT_B_NAME, PROJECT_B_TOPIC)
-    entry_a = _entry(source_a, "session-a", "Project A Plan")
-    entry_b = _entry(source_b, "session-b", "Project B Plan")
-    runner = _make_runner(source_b, [entry_a, entry_b])
-    runner.session_store.switch_session.return_value = entry_a
-    runner._session_db.resolve_session_by_title.return_value = "session-a"
-
-    result = await runner._handle_resume_command(
-        _event("/resume --cross-room Project A Plan", source_b)
-    )
-
-    assert "Cross-room resume" in result
-    assert PROJECT_B_NAME in result
-    runner.session_store.switch_session.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_matrix_resume_lists_only_current_room_by_default():
+async def test_matrix_resume_lists_all_rooms_by_default():
+    # Fork-local: the default /resume list is no longer room-scoped; sessions
+    # from every Matrix room are listed so any can be resumed by number/title.
     source_a = _make_matrix_source(PROJECT_A_ROOM_ID, PROJECT_A_NAME, PROJECT_A_TOPIC)
     source_b = _make_matrix_source(PROJECT_B_ROOM_ID, PROJECT_B_NAME, PROJECT_B_TOPIC)
     runner = _make_runner(
@@ -490,21 +482,5 @@ async def test_matrix_resume_lists_only_current_room_by_default():
 
     result = await runner._handle_resume_command(_event("/resume", source_b))
 
-    assert "Project B Plan" in result
-    assert "Project A Plan" not in result
-
-
-@pytest.mark.asyncio
-async def test_matrix_resume_all_lists_room_names():
-    source_a = _make_matrix_source(PROJECT_A_ROOM_ID, PROJECT_A_NAME, PROJECT_A_TOPIC)
-    source_b = _make_matrix_source(PROJECT_B_ROOM_ID, PROJECT_B_NAME, PROJECT_B_TOPIC)
-    runner = _make_runner(
-        source_b,
-        [_entry(source_a, "session-a", "Project A Plan"), _entry(source_b, "session-b", "Project B Plan")],
-    )
-
-    result = await runner._handle_resume_command(_event("/resume --all", source_b))
-
     assert "Project A Plan" in result
-    assert PROJECT_A_NAME in result
     assert "Project B Plan" in result

@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import mimetypes
 import os
@@ -349,6 +350,33 @@ _CRYPTO_DB_PATH = _STORE_DIR / "crypto.db"
 
 # Grace period: ignore messages older than this many seconds before startup.
 _STARTUP_GRACE_SECONDS = 5
+
+# MercuryTerm sessions panel — Matrix-native side channel (2026-06-20).
+# REQUEST: the phone sends a custom room event of this type (via the SDK's
+# Room.sendRaw) carrying {"v":1,"limit":N}. It is NOT an m.room.message, so it
+# never renders in the app transcript and never enters the slash dispatcher.
+# REPLY: the gateway answers with an m.room.message whose msgtype is the reply
+# type below, body = the session-list JSON. The phone reads that via the SDK's
+# MessageType.other(msgtype:body:) and decodes it; it is dropped from render by
+# msgtype match. The asymmetry is forced by the RustSDK read surface: the phone
+# can read a custom *msgtype on a message* but NOT the content of a custom
+# *event type*. See skill mercuryterm-swiftui-app, reference
+# gateway-sessions-listing-bug.md ("The Matrix-native custom-event channel").
+_SESSIONS_REQUEST_EVENT_TYPE = "com.mercury.sessions.request"
+_SESSIONS_REPLY_MSGTYPE = "com.mercury.sessions.reply"
+# Sentinel-text reply marker (2026-06-20). The custom-msgtype reply
+# (_SESSIONS_REPLY_MSGTYPE) is dropped by the RustSDK timeline's DEFAULT filter
+# before terminalLine() sees it, and opening the timeline with TimelineFilter.all
+# to admit it BROKE sync on the phone. So the reply now rides a normal m.text
+# message — the one type the default filter already passes — distinguished by
+# this invisible-separator-wrapped marker prefix on the body. The phone strips
+# the marker, decodes the JSON, and suppresses the line from the transcript.
+# U+2063 (INVISIBLE SEPARATOR) guarantees no human/agent message collides and,
+# if suppression ever races the render, no raw control junk is shown.
+_SESSIONS_REPLY_SENTINEL = "\u2063MERCURY_SESSIONS\u2063"
+_SESSIONS_PROTOCOL_VERSION = 1
+_SESSIONS_DEFAULT_LIMIT = 20
+_SESSIONS_MAX_LIMIT = 50
 
 _OUTBOUND_MENTION_RE = re.compile(
     r"(?<![\w/])(@[0-9A-Za-z._=/-]+:[0-9A-Za-z.-]+(?::\d+)?)"
@@ -1409,6 +1437,25 @@ class MatrixAdapter(BasePlatformAdapter):
         client.add_event_handler(EventType.ROOM_MESSAGE, self._on_room_message)
         client.add_event_handler(EventType.REACTION, self._on_reaction)
         client.add_event_handler(IntEvt.INVITE, self._on_invite)
+
+        # MercuryTerm sessions panel: a Matrix-NATIVE custom room event carries
+        # the "list my sessions" request from the phone, answered out-of-band
+        # with a custom-msgtype m.room.message (see _on_sessions_request). This
+        # rides BESIDE the message/reaction handlers and never enters the slash
+        # dispatcher, so it has no echo, no spinner coupling, and no mid-turn
+        # gate — the three failure modes that sank the text-scrape drawer.
+        #
+        # ORDER IS LOAD-BEARING: EventType.find(..., t_class=MESSAGE) registers
+        # the type→class mapping as a side effect. It MUST run before any such
+        # event is deserialized, because a custom event parsed without a known
+        # class lands as class `unknown` and EventType equality (which includes
+        # the class) then makes add_event_handler's match fail silently. Calling
+        # find() here, at registration time, guarantees the class is known when
+        # the first request arrives. Verified host-side 2026-06-20.
+        _SESSIONS_REQUEST_ET = EventType.find(
+            _SESSIONS_REQUEST_EVENT_TYPE, t_class=EventType.Class.MESSAGE
+        )
+        client.add_event_handler(_SESSIONS_REQUEST_ET, self._on_sessions_request)
 
         # Initial sync to catch up, then start background sync.
         self._startup_ts = time.time()
@@ -2539,6 +2586,180 @@ class MatrixAdapter(BasePlatformAdapter):
             await self._handle_text_message(
                 room_id, sender, event_id, event_ts, source_content, relates_to
             )
+
+    async def _on_sessions_request(self, event: Any) -> None:
+        """Answer a MercuryTerm sessions-panel request (custom room event).
+
+        The phone sends a ``com.mercury.sessions.request`` event carrying
+        ``{"v":1,"limit":N}``. We reply with an ``m.room.message`` whose msgtype
+        is ``com.mercury.sessions.reply`` and whose body is the session-list
+        JSON. This path is deliberately OUT-OF-BAND:
+
+          * It is not an ``m.room.message``, so it never enters
+            ``_on_room_message`` / the agent turn / the slash dispatcher — no
+            echo to suppress, no spinner down-edge stolen, no mid-turn gate.
+          * It is READ-ONLY (``list_sessions_rich`` via the shared
+            ``query_session_listing`` policy), so it is always safe to answer,
+            exactly like ``/sessions`` is read-only DB inspection.
+
+        Mirrors ``_on_room_message``'s self/room guards so a stray or replayed
+        event cannot trigger a reply loop or leak across rooms.
+        """
+        room_id = str(getattr(event, "room_id", ""))
+        sender = str(getattr(event, "sender", ""))
+
+        # Operational trace: log arrival at debug so a "no sessions" result on the
+        # phone can be told apart from "the request never arrived" (e.g. an
+        # unsettled post-restart E2EE channel that cannot decrypt inbound) when
+        # debug logging is enabled, without spamming the journal in normal use.
+        # Read it with: journalctl --user -u hermes-gateway.service | grep sessions-panel
+        logger.debug(
+            "Matrix: sessions-panel request received from %s in %s (event %s)",
+            sender,
+            room_id,
+            getattr(event, "event_id", "?"),
+        )
+
+        # Never answer our own request echo, and never answer a bridge/system
+        # identity. (The phone logs in as a different user than the gateway, so
+        # a legitimate request is never self-sent — but guard anyway.)
+        if self._is_self_sender(sender):
+            return
+        if self._is_system_or_bridge_sender(sender):
+            return
+        if not await self._is_allowed_matrix_room_event(room_id):
+            logger.info(
+                "Matrix: ignoring sessions-request from unauthorized room %s",
+                room_id,
+            )
+            return
+
+        # Startup-grace + dedup, same as the message path: do not answer a
+        # replayed request from initial sync, and answer each event once.
+        event_id = str(getattr(event, "event_id", ""))
+        if event_id and self._is_duplicate_event(event_id):
+            return
+        event_ts = _matrix_event_timestamp_seconds(event)
+        if event_ts and event_ts < self._startup_ts - _STARTUP_GRACE_SECONDS:
+            return
+
+        # Extract the requested limit from the event content (defensive: content
+        # may be a mautrix Obj, a dict, or absent).
+        limit = _SESSIONS_DEFAULT_LIMIT
+        content = getattr(event, "content", None)
+        try:
+            raw_limit = None
+            if isinstance(content, dict):
+                raw_limit = content.get("limit")
+            elif content is not None and hasattr(content, "get"):
+                raw_limit = content.get("limit")
+            elif content is not None:
+                raw_limit = getattr(content, "limit", None)
+            if raw_limit is not None:
+                limit = max(1, min(int(raw_limit), _SESSIONS_MAX_LIMIT))
+        except (TypeError, ValueError):
+            limit = _SESSIONS_DEFAULT_LIMIT
+
+        payload = await self._build_sessions_payload(room_id, limit)
+        await self._send_sessions_reply(room_id, payload)
+
+    async def _build_sessions_payload(self, room_id: str, limit: int) -> dict:
+        """Query the session listing read-only and shape the reply JSON.
+
+        Uses the SAME selection policy as the ``/sessions`` slash command
+        (``query_session_listing``) so the panel and the command agree. The
+        room-scope filter was already removed on ``fix/matrix-sessions-room-scope``,
+        so this returns cross-source rows and ``/resume <id>`` reaches any of
+        them. Returns a JSON-serializable dict; on any failure returns an empty
+        list with an ``error`` field rather than raising into the sync loop.
+        """
+        store = getattr(self, "_session_store", None)
+        session_db = getattr(store, "_db", None) if store is not None else None
+        if session_db is None:
+            return {
+                "v": _SESSIONS_PROTOCOL_VERSION,
+                "sessions": [],
+                "error": "session_db_unavailable",
+            }
+
+        try:
+            from hermes_cli.session_listing import query_session_listing
+
+            # Resolve the current session for this room so it is excluded from
+            # the list (you cannot resume the session you are already in).
+            current_session_id = None
+            try:
+                source = self.build_source(chat_id=room_id, chat_type="dm")
+                if store is not None and hasattr(store, "get_or_create_session"):
+                    current_session_id = store.get_or_create_session(
+                        source
+                    ).session_id
+            except Exception:
+                current_session_id = None
+
+            rows = query_session_listing(
+                session_db,
+                source=self.platform.value if self.platform else None,
+                current_session_id=current_session_id,
+                include_all_sources=True,   # panel is cross-source by design
+                include_unnamed=False,      # named sessions only — same as drawer
+                limit=limit,
+                exclude_sources=["tool"],
+            )
+            sessions = [
+                {
+                    "id": str(r.get("id") or ""),
+                    "title": str(r.get("title") or ""),
+                    "source": str(r.get("source") or ""),
+                }
+                for r in rows
+                if r.get("id")
+            ]
+            return {"v": _SESSIONS_PROTOCOL_VERSION, "sessions": sessions}
+        except Exception as exc:
+            logger.warning("Matrix: sessions-panel query failed: %s", exc)
+            return {
+                "v": _SESSIONS_PROTOCOL_VERSION,
+                "sessions": [],
+                "error": str(exc),
+            }
+
+    async def _send_sessions_reply(self, room_id: str, payload: dict) -> None:
+        """Send the sessions JSON as a NORMAL m.text message with a sentinel prefix.
+
+        History: this used to send a custom msgtype (_SESSIONS_REPLY_MSGTYPE),
+        but the RustSDK timeline's default filter dropped it before the phone's
+        terminalLine() saw it, and admitting it with TimelineFilter.all broke
+        sync. So the reply now rides an ordinary ``m.text`` — the one type the
+        default filter passes — with the body prefixed by
+        ``_SESSIONS_REPLY_SENTINEL``. The phone matches the prefix, strips it,
+        decodes the remaining JSON into ``sessionRows``, and suppresses the line.
+
+        Build the content dict DIRECTLY — do NOT route through
+        ``_build_text_message_content``, whose markdown/mention injection would
+        corrupt the JSON body.
+        """
+        if not self._client:
+            return
+        try:
+            body = json.dumps(payload, separators=(",", ":"))
+        except (TypeError, ValueError) as exc:
+            logger.warning("Matrix: sessions-panel reply not serializable: %s", exc)
+            return
+        # m.text so the default timeline filter passes it; sentinel prefix so the
+        # phone can recognize and suppress it without content-guessing a normal msg.
+        msg_content = {
+            "msgtype": "m.text",
+            "body": _SESSIONS_REPLY_SENTINEL + body,
+        }
+        try:
+            await self._client.send_message_event(
+                RoomID(room_id),
+                EventType.ROOM_MESSAGE,
+                msg_content,
+            )
+        except Exception as exc:
+            logger.warning("Matrix: sessions-panel reply send failed: %s", exc)
 
     async def _resolve_message_context(
         self,

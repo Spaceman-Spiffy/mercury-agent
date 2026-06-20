@@ -35,6 +35,20 @@ def _stub_mautrix():
         ROOM_ENCRYPTED = "m.room.encrypted"
         ROOM_NAME = "m.room.name"
 
+        # Mirror mautrix's EventType.Class enum + find() classmethod so code
+        # registering a custom event type via EventType.find(t, t_class=...)
+        # works under this stub too (see the matching block in test_matrix.py).
+        class Class:
+            MESSAGE = "message"
+            STATE = "state"
+            ACCOUNT_DATA = "account_data"
+            EPHEMERAL = "ephemeral"
+            TO_DEVICE = "to_device"
+
+        @classmethod
+        def find(cls, t, t_class=None):
+            return t
+
     class PaginationDirection:
         BACKWARD = "b"
         FORWARD = "f"

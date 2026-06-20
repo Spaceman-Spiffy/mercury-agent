@@ -47,6 +47,24 @@ def _make_fake_mautrix():
         ROOM_ENCRYPTED = "m.room.encrypted"
         ROOM_NAME = "m.room.name"
 
+        # Mirror mautrix's EventType.Class enum + find() classmethod so code
+        # that registers a custom event type via
+        # EventType.find(t, t_class=EventType.Class.MESSAGE) works under the
+        # stub. The real find() returns an EventType whose equality/str reduces
+        # to the type string; the stub represents event types as plain strings
+        # and the harness's add_event_handler keys handlers by that value, so
+        # returning the bare string `t` is hashable and dispatch-consistent.
+        class Class:
+            MESSAGE = "message"
+            STATE = "state"
+            ACCOUNT_DATA = "account_data"
+            EPHEMERAL = "ephemeral"
+            TO_DEVICE = "to_device"
+
+        @classmethod
+        def find(cls, t, t_class=None):
+            return t
+
     class UserID(str):
         pass
 

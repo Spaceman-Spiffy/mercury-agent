@@ -124,7 +124,7 @@ class TestMatrixSyncAuthRetry:
 
         nio_mock.SyncError = SyncError
 
-        from gateway.platforms.matrix import MatrixAdapter
+        from plugins.platforms.matrix.adapter import MatrixAdapter
         adapter = MatrixAdapter.__new__(MatrixAdapter)
         adapter._closing = False
         # The base __init__ sets self.platform; the __new__ harness bypass skips it,
@@ -162,7 +162,7 @@ class TestMatrixSyncAuthRetry:
     def test_exception_with_401_stops_loop(self):
         """An exception containing '401' should stop syncing."""
         from gateway.config import Platform
-        from gateway.platforms.matrix import MatrixAdapter
+        from plugins.platforms.matrix.adapter import MatrixAdapter
         adapter = MatrixAdapter.__new__(MatrixAdapter)
         adapter._closing = False
         # See test_unknown_token_sync_error_stops_loop — _set_fatal_error reads
@@ -201,7 +201,7 @@ class TestMatrixSyncAuthRetry:
 
     def test_transient_error_retries(self):
         """A transient error should retry (not stop immediately)."""
-        from gateway.platforms.matrix import MatrixAdapter
+        from plugins.platforms.matrix.adapter import MatrixAdapter
         adapter = MatrixAdapter.__new__(MatrixAdapter)
         adapter._closing = False
 

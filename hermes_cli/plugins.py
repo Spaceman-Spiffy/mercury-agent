@@ -142,6 +142,17 @@ VALID_HOOKS: Set[str] = {
     # gateway's own system messages (which never pass through the per-turn
     # LLM-output path).
     "transform_gateway_notice",
+    # Transform an interim (mid-turn) assistant message before it is
+    # surfaced to the UI/chat. These are discrete pre-tool commentary
+    # messages delivered via _emit_interim_assistant_message in run_agent.py,
+    # BEFORE the tool-calling loop completes — so they never pass through the
+    # per-turn transform_llm_output path (which fires only on the final
+    # response). Plugins return a string to replace the interim text, or
+    # None/empty to leave unchanged; first non-empty string wins. Kwargs:
+    # response_text, session_id, model, platform. Same cosmetic
+    # vocabulary/personality use as transform_llm_output, but for the
+    # interim delivery surface.
+    "transform_interim_output",
     "pre_llm_call",
     "post_llm_call",
     "pre_api_request",

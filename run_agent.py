@@ -4293,7 +4293,35 @@ class AIAgent:
         visible = self._strip_think_blocks(content or "").strip()
         if not visible or visible == "(empty)":
             return
+        # Determine streamed-dedup status on the ORIGINAL text first: whether
+        # this commentary was already token-streamed to the frontend is a fact
+        # about the raw text, independent of any cosmetic transform applied
+        # below. Computing it post-transform would desync the comparison
+        # against _current_streamed_assistant_text and risk a double emit.
         already_streamed = self._interim_content_was_streamed(visible)
+        # Plugin hook: transform_interim_output
+        # Interim commentary is delivered here, BEFORE the tool-calling loop
+        # completes, so it never reaches the per-turn transform_llm_output
+        # hook in turn_finalizer.py. Give a cosmetic output filter the same
+        # reach over this discrete delivery surface. First non-empty string
+        # wins; None/empty leaves the text unchanged. Fail-safe: any error
+        # leaves the interim text untouched (a hook bug can never break or
+        # block interim delivery).
+        try:
+            from hermes_cli.plugins import invoke_hook as _invoke_hook
+            _interim_results = _invoke_hook(
+                "transform_interim_output",
+                response_text=visible,
+                session_id=getattr(self, "session_id", "") or "",
+                model=getattr(self, "model", "") or "",
+                platform=getattr(self, "platform", None) or "",
+            )
+            for _hook_result in _interim_results:
+                if isinstance(_hook_result, str) and _hook_result:
+                    visible = _hook_result
+                    break  # First non-empty string wins
+        except Exception:
+            logger.debug("transform_interim_output hook failed", exc_info=True)
         try:
             cb(visible, already_streamed=already_streamed)
         except Exception:

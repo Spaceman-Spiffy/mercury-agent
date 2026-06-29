@@ -1625,6 +1625,45 @@ def test_interim_commentary_is_not_marked_already_streamed_when_stream_callback_
     }
 
 
+def test_interim_transform_skipped_when_already_streamed(monkeypatch):
+    """When commentary was token-streamed, transform_interim_output must NOT
+    be dispatched: the gateway discards its result on the already_streamed
+    branch (the transform_stream_fragment hook filters that text in-flight
+    instead). Dispatching here would recompute a thrown-away result and write
+    a phantom edit-log entry. The non-streamed path must still dispatch."""
+    import hermes_cli.plugins as _P
+
+    calls = {"n": 0}
+
+    def _counting_hook(**_kw):
+        calls["n"] += 1
+        return None  # decline to transform; we only count invocations
+
+    mgr = _P.PluginManager()
+    mgr._hooks["transform_interim_output"] = [_counting_hook]
+    monkeypatch.setattr(_P, "_plugin_manager", mgr)
+
+    # Case 1: content WAS streamed -> guard skips the hook. The streamed-state
+    # check compares _current_streamed_assistant_text against the visible text
+    # (see _interim_content_was_streamed); set it directly to simulate a
+    # preamble that already token-streamed to the frontend.
+    agent = _build_agent(monkeypatch)
+    agent.interim_assistant_callback = lambda text, *, already_streamed=False: None
+    agent._current_streamed_assistant_text = "short version: yes"
+    agent._emit_interim_assistant_message(
+        {"role": "assistant", "content": "short version: yes"}
+    )
+    assert calls["n"] == 0, "hook dispatched despite already_streamed=True"
+
+    # Case 2: content was NOT streamed -> guard allows the hook.
+    agent2 = _build_agent(monkeypatch)
+    agent2.interim_assistant_callback = lambda text, *, already_streamed=False: None
+    agent2._emit_interim_assistant_message(
+        {"role": "assistant", "content": "a fresh non-streamed preamble"}
+    )
+    assert calls["n"] == 1, "hook not dispatched on the non-streamed interim path"
+
+
 def test_interim_commentary_preserves_assistant_content(monkeypatch):
     """Interim commentary must not silently mutate assistant text containing
     literal <memory-context> markers — that's legitimate model output (docs,

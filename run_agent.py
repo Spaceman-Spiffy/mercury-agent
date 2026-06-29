@@ -4307,21 +4307,32 @@ class AIAgent:
         # wins; None/empty leaves the text unchanged. Fail-safe: any error
         # leaves the interim text untouched (a hook bug can never break or
         # block interim delivery).
-        try:
-            from hermes_cli.plugins import invoke_hook as _invoke_hook
-            _interim_results = _invoke_hook(
-                "transform_interim_output",
-                response_text=visible,
-                session_id=getattr(self, "session_id", "") or "",
-                model=getattr(self, "model", "") or "",
-                platform=getattr(self, "platform", None) or "",
-            )
-            for _hook_result in _interim_results:
-                if isinstance(_hook_result, str) and _hook_result:
-                    visible = _hook_result
-                    break  # First non-empty string wins
-        except Exception:
-            logger.debug("transform_interim_output hook failed", exc_info=True)
+        #
+        # Skip entirely when the content was already token-streamed: in that
+        # case the gateway interim callback takes the already_streamed branch
+        # (on_segment_break) and DISCARDS whatever this transform returns, so
+        # the live-streamed text is instead filtered in-flight by the
+        # transform_stream_fragment hook in gateway/stream_consumer.py. Running
+        # transform_interim_output here too would recompute a result that is
+        # thrown away AND write a phantom edit-log entry for a change that was
+        # never delivered on this surface. Only the NON-streamed interim path
+        # (where cb actually delivers this text) needs the discrete transform.
+        if not already_streamed:
+            try:
+                from hermes_cli.plugins import invoke_hook as _invoke_hook
+                _interim_results = _invoke_hook(
+                    "transform_interim_output",
+                    response_text=visible,
+                    session_id=getattr(self, "session_id", "") or "",
+                    model=getattr(self, "model", "") or "",
+                    platform=getattr(self, "platform", None) or "",
+                )
+                for _hook_result in _interim_results:
+                    if isinstance(_hook_result, str) and _hook_result:
+                        visible = _hook_result
+                        break  # First non-empty string wins
+            except Exception:
+                logger.debug("transform_interim_output hook failed", exc_info=True)
         try:
             cb(visible, already_streamed=already_streamed)
         except Exception:

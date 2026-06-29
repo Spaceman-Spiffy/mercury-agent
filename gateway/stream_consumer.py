@@ -799,6 +799,59 @@ class GatewayStreamConsumer:
         # Strip trailing whitespace/newlines but preserve leading content
         return cleaned.rstrip()
 
+    def _apply_stream_fragment_transform(
+        self, text: str, *, at_boundary: bool,
+    ) -> str:
+        """Apply opt-in cosmetic ``transform_stream_fragment`` plugins to a
+        live mid-stream display fragment.
+
+        Free when no plugin registers the hook: the ``has_hook`` guard short-
+        circuits before any work, so the hot streaming path pays nothing
+        unless a filter opts in. Policy (which characters to normalize) lives
+        in the plugin, never here — the core stays narrow-waist.
+
+        The transform runs on the cursor-stripped body so a plugin never sees
+        or mangles the streaming cursor, and so a trailing-tail hold-back can
+        observe the true end of the streamed content. The cursor is
+        re-appended verbatim afterward.
+
+        ``at_boundary`` is True on a finalize edit (the sealed last edit of a
+        segment), telling a plugin it MUST NOT hold back an undecidable tail.
+
+        Fail-safe: any error returns the ORIGINAL text unchanged — a cosmetic
+        hook can never break or stall the stream.
+        """
+        if not text:
+            return text
+        try:
+            from hermes_cli.plugins import get_plugin_manager
+            mgr = get_plugin_manager()
+            if not mgr.has_hook("transform_stream_fragment"):
+                return text
+        except Exception:
+            return text
+        cursor = self.cfg.cursor or ""
+        body, suffix = text, ""
+        if cursor and text.endswith(cursor):
+            body, suffix = text[: -len(cursor)], cursor
+        try:
+            results = mgr.invoke_hook(
+                "transform_stream_fragment",
+                response_text=body,
+                at_boundary=bool(at_boundary),
+                session_id=getattr(self, "session_id", "") or "",
+                model=getattr(self, "model", "") or "",
+                platform=getattr(self.adapter, "platform_name", "") or "",
+            )
+            for _r in results:
+                if isinstance(_r, str) and _r:
+                    body = _r
+                    break
+        except Exception:
+            logger.debug("transform_stream_fragment hook failed", exc_info=True)
+            return text
+        return body + suffix
+
     async def _send_new_chunk(
         self,
         text: str,
@@ -1355,6 +1408,17 @@ class GatewayStreamConsumer:
         # Media files are delivered as native attachments after the stream
         # finishes (via _deliver_media_from_response in gateway/run.py).
         text = self._clean_for_display(text)
+        # Cosmetic live-stream transform (opt-in plugin hook). Runs on the
+        # mid-stream display fragment BEFORE the _last_sent_text dedup below,
+        # so an in-flight normalization (e.g. em-dash close-up) never causes a
+        # redundant re-edit and is applied uniformly across every display path
+        # that funnels through here (progressive edit, overflow split, segment
+        # finalize, got_done, cancellation). ``finalize`` marks the sealed last
+        # edit of a segment, so the plugin must not hold back a tail there.
+        # The raw accumulator (_accumulated) is left untouched as source of
+        # truth — only the displayed copy is transformed. Free when no plugin
+        # registers the hook.
+        text = self._apply_stream_fragment_transform(text, at_boundary=finalize)
         # A bare streaming cursor is not meaningful user-visible content and
         # can render as a stray tofu/white-box message on some clients.
         visible_without_cursor = text

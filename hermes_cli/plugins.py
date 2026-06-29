@@ -153,6 +153,33 @@ VALID_HOOKS: Set[str] = {
     # vocabulary/personality use as transform_llm_output, but for the
     # interim delivery surface.
     "transform_interim_output",
+    # Transform a LIVE-STREAMED display fragment before the gateway stream
+    # consumer edits it onto the platform message. Unlike the two hooks above
+    # — which fire once per DISCRETE, COMPLETE message — this fires repeatedly
+    # on the PARTIAL, mid-stream buffer as tokens arrive (gateway streaming
+    # path only). It exists so a cosmetic output filter reaches text the user
+    # watches type in real time, not just the post-tool-loop final response.
+    #
+    # CONTRACT — read carefully, the input is PARTIAL:
+    #   * ``response_text`` may be a half-formed fragment (a mid-word buffer).
+    #     Only IDEMPOTENT, POSITION-INDEPENDENT transforms are safe here.
+    #     Sentence-anchored or re-capitalizing rules (e.g. opener deletion)
+    #     MUST NOT run on this hook — they misfire on an incomplete buffer;
+    #     keep those on transform_llm_output / transform_interim_output where
+    #     the text is whole.
+    #   * ``at_boundary`` (bool): True when this fragment is the final/sealed
+    #     edit of its segment (finalize). When False the fragment will be
+    #     superseded by further edits, so a plugin MAY hold back a trailing
+    #     sub-fragment whose transform is not yet decidable (e.g. a dangling
+    #     em dash whose right-hand word has not streamed) by returning the
+    #     text with that tail trimmed — the consumer's raw accumulator still
+    #     holds those characters, so they reappear and resolve on the next
+    #     edit. When True a plugin MUST NOT hold back (it is the last edit).
+    #   * First non-empty string wins; None/empty leaves the fragment
+    #     unchanged. Fail-safe: any exception leaves the fragment untouched
+    #     (a hook bug can never break or stall the stream). Cosmetic only.
+    # Kwargs: response_text, at_boundary, session_id, model, platform.
+    "transform_stream_fragment",
     "pre_llm_call",
     "post_llm_call",
     "pre_api_request",

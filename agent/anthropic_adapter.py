@@ -1054,7 +1054,26 @@ def refresh_anthropic_oauth_pure(refresh_token: str, *, use_json: bool = False) 
                 result = json.loads(resp.read().decode())
         except Exception as exc:
             last_error = exc
-            logger.debug("Anthropic token refresh failed at %s: %s", endpoint, exc)
+            # DIAGNOSTIC (2026-07-02, local fork): raised from debug to WARNING
+            # and capture the HTTP error body — refresh failures were invisible
+            # through the gateway's INFO/WARNING filter, masking the cause of
+            # recurring forced browser re-auths (suspected: multi-process
+            # refresh-token race → reuse-detection revocation). The body tells
+            # us WHICH OAuth error (invalid_grant vs. rate limit vs. other).
+            body = ""
+            try:
+                reader = getattr(exc, "read", None)
+                if callable(reader):
+                    raw = reader()
+                    if isinstance(raw, bytes):
+                        body = raw.decode(errors="replace")[:500]
+            except Exception:
+                pass
+            logger.warning(
+                "Anthropic OAuth refresh FAILED at %s (pid=%s): %s%s",
+                endpoint, os.getpid(), exc,
+                f" — body: {body}" if body else "",
+            )
             continue
 
         access_token = result.get("access_token", "")
@@ -1119,10 +1138,16 @@ def _refresh_oauth_token(creds: Dict[str, Any]) -> Optional[str]:
             refreshed["refresh_token"],
             refreshed["expires_at_ms"],
         )
-        logger.debug("Successfully refreshed Claude Code OAuth token")
+        # DIAGNOSTIC (2026-07-02, local fork): raised debug→info with pid so
+        # successful refreshes are attributable per-process when correlating
+        # the suspected multi-process refresh race.
+        logger.info("Successfully refreshed Claude Code OAuth token (pid=%s)", os.getpid())
         return refreshed["access_token"]
     except Exception as e:
-        logger.debug("Failed to refresh Claude Code token: %s", e)
+        # DIAGNOSTIC (2026-07-02, local fork): debug→warning. This is the
+        # give-up point that ends in a forced browser re-auth; it must be
+        # visible through the gateway's log filter.
+        logger.warning("Failed to refresh Claude Code token (pid=%s): %s", os.getpid(), e)
         return None
 
 
@@ -1205,7 +1230,13 @@ def _resolve_claude_code_token_from_credentials(creds: Optional[Dict[str, Any]] 
         refreshed = _refresh_oauth_token(creds)
         if refreshed:
             return refreshed
-        logger.debug("Token refresh failed — re-run 'claude setup-token' to reauthenticate")
+        # DIAGNOSTIC (2026-07-02, local fork): debug→warning — the terminal
+        # "you must re-auth in a browser" state was invisible in gateway logs.
+        logger.warning(
+            "Token refresh failed and no valid credential remains (pid=%s) — "
+            "re-run 'claude setup-token' / browser re-auth required",
+            os.getpid(),
+        )
     return None
 
 

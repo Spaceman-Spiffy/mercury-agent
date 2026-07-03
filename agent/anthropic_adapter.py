@@ -1038,54 +1038,97 @@ def refresh_anthropic_oauth_pure(refresh_token: str, *, use_json: bool = False) 
         "https://platform.claude.com/v1/oauth/token",
         "https://console.anthropic.com/v1/oauth/token",
     ]
-    last_error = None
-    for endpoint in token_endpoints:
-        req = urllib.request.Request(
-            endpoint,
-            data=data,
-            headers={
-                "Content-Type": content_type,
-                "User-Agent": f"claude-code/{_get_claude_code_version()} (external, cli)",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                result = json.loads(resp.read().decode())
-        except Exception as exc:
-            last_error = exc
-            # DIAGNOSTIC (2026-07-02, local fork): raised from debug to WARNING
-            # and capture the HTTP error body — refresh failures were invisible
-            # through the gateway's INFO/WARNING filter, masking the cause of
-            # recurring forced browser re-auths (suspected: multi-process
-            # refresh-token race → reuse-detection revocation). The body tells
-            # us WHICH OAuth error (invalid_grant vs. rate limit vs. other).
-            body = ""
-            try:
-                reader = getattr(exc, "read", None)
-                if callable(reader):
-                    raw = reader()
-                    if isinstance(raw, bytes):
-                        body = raw.decode(errors="replace")[:500]
-            except Exception:
-                pass
-            logger.warning(
-                "Anthropic OAuth refresh FAILED at %s (pid=%s): %s%s",
-                endpoint, os.getpid(), exc,
-                f" — body: {body}" if body else "",
-            )
-            continue
 
-        access_token = result.get("access_token", "")
-        if not access_token:
-            raise ValueError("Anthropic refresh response was missing access_token")
-        next_refresh = result.get("refresh_token", refresh_token)
-        expires_in = result.get("expires_in", 3600)
-        return {
-            "access_token": access_token,
-            "refresh_token": next_refresh,
-            "expires_at_ms": int(time.time() * 1000) + (expires_in * 1000),
-        }
+    def _is_transient(exc: Exception) -> bool:
+        """Retryable = 429 / 5xx / network-level failure. Terminal = 4xx auth
+        errors (invalid_grant, bad request) — only those prove credential death.
+
+        LOCAL FORK (2026-07-03): observed capture showed an Anthropic-side 429
+        (during their elevated-error incident) being treated as terminal,
+        forcing a browser re-auth for a transient error. See skill
+        hermes-claude-auth-maintenance, references/oauth-refresh-race.md.
+        """
+        code = getattr(exc, "code", None)
+        if code is not None:
+            return code == 429 or 500 <= int(code) < 600
+        return True  # URLError / timeout / connection reset — network, retryable
+
+    def _retry_after_seconds(exc: Exception) -> Optional[int]:
+        try:
+            headers = getattr(exc, "headers", None)
+            if headers is not None:
+                val = headers.get("Retry-After")
+                if val:
+                    return max(0, int(val.strip()))
+        except Exception:
+            pass
+        return None
+
+    max_passes = 3
+    last_error = None
+    for attempt in range(1, max_passes + 1):
+        retry_after = None
+        for endpoint in token_endpoints:
+            req = urllib.request.Request(
+                endpoint,
+                data=data,
+                headers={
+                    "Content-Type": content_type,
+                    "User-Agent": f"claude-code/{_get_claude_code_version()} (external, cli)",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    result = json.loads(resp.read().decode())
+            except Exception as exc:
+                last_error = exc
+                # DIAGNOSTIC (2026-07-02, local fork): raised from debug to WARNING
+                # and capture the HTTP error body — refresh failures were invisible
+                # through the gateway's INFO/WARNING filter, masking the cause of
+                # recurring forced browser re-auths. The body tells us WHICH OAuth
+                # error (invalid_grant vs. rate limit vs. other).
+                body = ""
+                try:
+                    reader = getattr(exc, "read", None)
+                    if callable(reader):
+                        raw = reader()
+                        if isinstance(raw, bytes):
+                            body = raw.decode(errors="replace")[:500]
+                except Exception:
+                    pass
+                logger.warning(
+                    "Anthropic OAuth refresh FAILED at %s (pid=%s, attempt %d/%d): %s%s",
+                    endpoint, os.getpid(), attempt, max_passes, exc,
+                    f" — body: {body}" if body else "",
+                )
+                if retry_after is None:
+                    retry_after = _retry_after_seconds(exc)
+                continue
+
+            access_token = result.get("access_token", "")
+            if not access_token:
+                raise ValueError("Anthropic refresh response was missing access_token")
+            next_refresh = result.get("refresh_token", refresh_token)
+            expires_in = result.get("expires_in", 3600)
+            return {
+                "access_token": access_token,
+                "refresh_token": next_refresh,
+                "expires_at_ms": int(time.time() * 1000) + (expires_in * 1000),
+            }
+
+        if last_error is None or not _is_transient(last_error):
+            break  # terminal (invalid_grant / 400 / 401 class) — do not hammer
+        if attempt < max_passes:
+            # Honor Retry-After when present; else exponential 2s, 8s. Per-sleep
+            # cap 60s keeps worst-case added latency ~2 min in the caller path.
+            delay = min(retry_after if retry_after is not None else 2 ** (2 * attempt - 1), 60)
+            logger.warning(
+                "Anthropic OAuth refresh: transient error (pid=%s) — retrying in %ds "
+                "(attempt %d/%d)",
+                os.getpid(), delay, attempt, max_passes,
+            )
+            time.sleep(delay)
 
     if last_error is not None:
         raise last_error

@@ -507,7 +507,10 @@ class TestResolveAnthropicToken:
 
 
 class TestRefreshOauthToken:
-    def test_returns_none_without_refresh_token(self):
+    def test_returns_none_without_refresh_token(self, tmp_path, monkeypatch):
+        # Isolate from the host's real ~/.claude credentials: the adoption
+        # path re-reads the live credential file before refreshing.
+        monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
         creds = {"accessToken": "expired", "refreshToken": "", "expiresAt": 0}
         assert _refresh_oauth_token(creds) is None
 
@@ -544,14 +547,19 @@ class TestRefreshOauthToken:
         assert written["claudeAiOauth"]["accessToken"] == "new-token-abc"
         assert written["claudeAiOauth"]["refreshToken"] == "new-refresh-456"
 
-    def test_failed_refresh_returns_none(self):
+    def test_failed_refresh_returns_none(self, tmp_path, monkeypatch):
+        # Isolate from the host's real ~/.claude credentials (see above), and
+        # skip the transient-error backoff sleeps (2s/8s) the refresh path
+        # now takes on network failures.
+        monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
         creds = {
             "accessToken": "old",
             "refreshToken": "refresh-123",
             "expiresAt": 0,
         }
 
-        with patch("urllib.request.urlopen", side_effect=Exception("network error")):
+        with patch("urllib.request.urlopen", side_effect=Exception("network error")), \
+             patch("time.sleep"):
             assert _refresh_oauth_token(creds) is None
 
 

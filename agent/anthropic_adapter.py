@@ -18,6 +18,7 @@ import platform
 import secrets
 import stat
 import subprocess
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -1138,6 +1139,15 @@ def refresh_anthropic_oauth_pure(refresh_token: str, *, use_json: bool = False) 
     raise ValueError("Anthropic token refresh failed")
 
 
+# LOCAL FORK (2026-07-06): refresh-failure cooldown. After a failed refresh,
+# skip further refresh attempts for this window so a dead/unrefreshable pair
+# cannot hammer the OAuth endpoint (and flood the logs) on every resolve.
+# Per-process state; a successful refresh or a rewritten credential file
+# (different refresh token) clears it.
+_REFRESH_FAILURE_COOLDOWN_S = 600
+_refresh_failure_state: Dict[str, float] = {}
+
+
 def _refresh_oauth_token(creds: Dict[str, Any]) -> Optional[str]:
     """Attempt to refresh an expired Claude Code OAuth token.
 
@@ -1177,6 +1187,19 @@ def _refresh_oauth_token(creds: Dict[str, Any]) -> Optional[str]:
         logger.debug("No refresh token available — cannot refresh")
         return None
 
+    # LOCAL FORK (2026-07-06): cooldown gate. If this exact refresh token
+    # failed recently, do not retry yet — a dead pair otherwise generates a
+    # full retry cycle (~10-20s of blocking + warning spam) on every resolve.
+    # Keyed by token value so a NEW pair (CLI re-login) bypasses immediately.
+    now = time.time()
+    failed_at = _refresh_failure_state.get(refresh_token)
+    if failed_at is not None and (now - failed_at) < _REFRESH_FAILURE_COOLDOWN_S:
+        logger.debug(
+            "Skipping OAuth refresh — last failure %.0fs ago (cooldown %ds, pid=%s)",
+            now - failed_at, _REFRESH_FAILURE_COOLDOWN_S, os.getpid(),
+        )
+        return None
+
     try:
         refreshed = refresh_anthropic_oauth_pure(refresh_token, use_json=False)
         _write_claude_code_credentials(
@@ -1184,16 +1207,22 @@ def _refresh_oauth_token(creds: Dict[str, Any]) -> Optional[str]:
             refreshed["refresh_token"],
             refreshed["expires_at_ms"],
         )
+        _refresh_failure_state.pop(refresh_token, None)
         # DIAGNOSTIC (2026-07-02, local fork): raised debug→info with pid so
         # successful refreshes are attributable per-process when correlating
         # the suspected multi-process refresh race.
         logger.info("Successfully refreshed Claude Code OAuth token (pid=%s)", os.getpid())
         return refreshed["access_token"]
     except Exception as e:
+        _refresh_failure_state[refresh_token] = time.time()
         # DIAGNOSTIC (2026-07-02, local fork): debug→warning. This is the
         # give-up point that ends in a forced browser re-auth; it must be
         # visible through the gateway's log filter.
-        logger.warning("Failed to refresh Claude Code token (pid=%s): %s", os.getpid(), e)
+        logger.warning(
+            "Failed to refresh Claude Code token (pid=%s): %s — "
+            "suppressing further attempts for %ds",
+            os.getpid(), e, _REFRESH_FAILURE_COOLDOWN_S,
+        )
         return None
 
 
@@ -1286,17 +1315,40 @@ def _resolve_claude_code_token_from_credentials(creds: Optional[Dict[str, Any]] 
     return None
 
 
-def _prefer_refreshable_claude_code_token(env_token: str, creds: Optional[Dict[str, Any]]) -> Optional[str]:
+def _prefer_refreshable_claude_code_token(
+    env_token: str,
+    creds: Optional[Dict[str, Any]],
+    *,
+    refresh_expired: bool = True,
+) -> Optional[str]:
     """Prefer Claude Code creds when a persisted env OAuth token would shadow refresh.
 
     Hermes historically persisted setup tokens into ANTHROPIC_TOKEN. That makes
     later refresh impossible because the static env token wins before we ever
     inspect Claude Code's refreshable credential file. If we have a refreshable
     Claude Code credential record, prefer it over the static env OAuth token.
+
+    ``refresh_expired=False`` (LOCAL FORK, 2026-07-06): when the env token is a
+    long-lived setup token (CLAUDE_CODE_OAUTH_TOKEN), an EXPIRED credential
+    file must not gate resolution behind a network refresh attempt. A dead CLI
+    login pair otherwise forces a doomed refresh POST (with retries, ~10-20s)
+    on EVERY resolve before falling back to the perfectly valid setup token —
+    observed 2026-07-04..06 as 1,700+ refresh-failure warnings while the 429'd
+    OAuth endpoint kept the stale pair permanently unrefreshable. With
+    ``refresh_expired=False`` we still prefer the file credential when it is
+    CURRENTLY valid (a fresh CLI login should win over a year-old setup token),
+    but an expired pair yields immediately to the env token — no network I/O
+    on the resolve path.
     """
     if not env_token or not _is_oauth_token(env_token) or not isinstance(creds, dict):
         return None
     if not creds.get("refreshToken"):
+        return None
+    if not refresh_expired and not is_claude_code_token_valid(creds):
+        logger.debug(
+            "Claude Code credential file is expired — using env setup token "
+            "without attempting refresh"
+        )
         return None
 
     resolved = _resolve_claude_code_token_from_credentials(creds)
@@ -1371,10 +1423,16 @@ def resolve_anthropic_token() -> Optional[str]:
             return preferred
         return token
 
-    # 2. CLAUDE_CODE_OAUTH_TOKEN (used by Claude Code for setup-tokens)
+    # 2. CLAUDE_CODE_OAUTH_TOKEN (used by Claude Code for setup-tokens).
+    # LOCAL FORK (2026-07-06): refresh_expired=False — this env var is the
+    # designated long-lived setup-token slot, so an expired credential file
+    # must never gate it behind a doomed network refresh. A currently-valid
+    # file credential still wins (fresh CLI login beats old setup token).
     cc_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
     if cc_token:
-        preferred = _prefer_refreshable_claude_code_token(cc_token, creds)
+        preferred = _prefer_refreshable_claude_code_token(
+            cc_token, creds, refresh_expired=False
+        )
         if preferred:
             return preferred
         return cc_token

@@ -662,6 +662,159 @@ class TestResolveWithRefresh:
 
         assert result == "refreshed-token"
 
+    def test_setup_token_env_skips_refresh_when_cred_file_expired(self, monkeypatch, tmp_path):
+        """LOCAL FORK: CLAUDE_CODE_OAUTH_TOKEN wins immediately over an EXPIRED
+        credential file — no refresh attempt (network) on the resolve path."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_TOKEN", raising=False)
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-setup-token-1yr")
+
+        cred_file = tmp_path / ".claude" / ".credentials.json"
+        cred_file.parent.mkdir(parents=True)
+        cred_file.write_text(json.dumps({
+            "claudeAiOauth": {
+                "accessToken": "expired-cli-token",
+                "refreshToken": "stale-refresh",
+                "expiresAt": int(time.time() * 1000) - 3600_000,
+            }
+        }))
+        monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
+
+        with patch("agent.anthropic_adapter._refresh_oauth_token") as mock_refresh:
+            result = resolve_anthropic_token()
+
+        assert result == "sk-ant-setup-token-1yr"
+        mock_refresh.assert_not_called()
+
+    def test_setup_token_env_still_prefers_valid_cred_file(self, monkeypatch, tmp_path):
+        """LOCAL FORK: a CURRENTLY-VALID credential file still wins over the
+        setup token (fresh CLI login beats a year-old setup token)."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_TOKEN", raising=False)
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-setup-token-1yr")
+
+        cred_file = tmp_path / ".claude" / ".credentials.json"
+        cred_file.parent.mkdir(parents=True)
+        cred_file.write_text(json.dumps({
+            "claudeAiOauth": {
+                "accessToken": "fresh-cli-token",
+                "refreshToken": "live-refresh",
+                "expiresAt": int(time.time() * 1000) + 3600_000,
+            }
+        }))
+        monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
+
+        assert resolve_anthropic_token() == "fresh-cli-token"
+
+    def test_legacy_anthropic_token_env_still_refreshes_expired_creds(self, monkeypatch, tmp_path):
+        """Legacy ANTHROPIC_TOKEN path is unchanged: an expired refreshable
+        credential file still triggers a refresh attempt."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("ANTHROPIC_TOKEN", "sk-ant-legacy-static")
+        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+
+        cred_file = tmp_path / ".claude" / ".credentials.json"
+        cred_file.parent.mkdir(parents=True)
+        cred_file.write_text(json.dumps({
+            "claudeAiOauth": {
+                "accessToken": "expired-cli-token",
+                "refreshToken": "valid-refresh",
+                "expiresAt": int(time.time() * 1000) - 3600_000,
+            }
+        }))
+        monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
+
+        with patch("agent.anthropic_adapter._refresh_oauth_token", return_value="refreshed-token") as mock_refresh:
+            result = resolve_anthropic_token()
+
+        assert result == "refreshed-token"
+        mock_refresh.assert_called_once()
+
+
+class TestRefreshFailureCooldown:
+    """LOCAL FORK: after a failed refresh, further attempts for the SAME
+    refresh token are suppressed for the cooldown window."""
+
+    def _expired_creds(self, refresh_token="cooldown-refresh"):
+        return {
+            "accessToken": "expired",
+            "refreshToken": refresh_token,
+            "expiresAt": int(time.time() * 1000) - 3600_000,
+        }
+
+    def _isolate(self, monkeypatch, tmp_path):
+        import agent.anthropic_adapter as aa
+        monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
+        monkeypatch.setattr(
+            "agent.anthropic_adapter.read_claude_code_credentials", lambda: None
+        )
+        monkeypatch.setattr(aa, "_refresh_failure_state", {})
+        return aa
+
+    def test_failed_refresh_sets_cooldown_and_suppresses_retry(self, monkeypatch, tmp_path):
+        aa = self._isolate(monkeypatch, tmp_path)
+        creds = self._expired_creds()
+
+        with patch(
+            "agent.anthropic_adapter.refresh_anthropic_oauth_pure",
+            side_effect=ValueError("HTTP Error 429"),
+        ) as mock_pure:
+            assert aa._refresh_oauth_token(creds) is None
+            assert mock_pure.call_count == 1
+            # Second resolve inside the cooldown window: no network call.
+            assert aa._refresh_oauth_token(creds) is None
+            assert mock_pure.call_count == 1
+
+    def test_cooldown_expiry_allows_retry(self, monkeypatch, tmp_path):
+        aa = self._isolate(monkeypatch, tmp_path)
+        creds = self._expired_creds()
+        aa._refresh_failure_state["cooldown-refresh"] = (
+            time.time() - aa._REFRESH_FAILURE_COOLDOWN_S - 1
+        )
+
+        with patch(
+            "agent.anthropic_adapter.refresh_anthropic_oauth_pure",
+            side_effect=ValueError("HTTP Error 429"),
+        ) as mock_pure:
+            assert aa._refresh_oauth_token(creds) is None
+            assert mock_pure.call_count == 1
+
+    def test_new_refresh_token_bypasses_cooldown(self, monkeypatch, tmp_path):
+        """A rotated pair (e.g. fresh CLI login) is keyed differently and
+        refreshes immediately despite an active cooldown on the old token."""
+        aa = self._isolate(monkeypatch, tmp_path)
+        aa._refresh_failure_state["old-dead-refresh"] = time.time()
+        creds = self._expired_creds(refresh_token="brand-new-refresh")
+
+        with patch(
+            "agent.anthropic_adapter.refresh_anthropic_oauth_pure",
+            return_value={
+                "access_token": "fresh-access",
+                "refresh_token": "next-refresh",
+                "expires_at_ms": int(time.time() * 1000) + 3600_000,
+            },
+        ) as mock_pure:
+            assert aa._refresh_oauth_token(creds) == "fresh-access"
+            assert mock_pure.call_count == 1
+
+    def test_successful_refresh_clears_cooldown(self, monkeypatch, tmp_path):
+        aa = self._isolate(monkeypatch, tmp_path)
+        creds = self._expired_creds()
+        aa._refresh_failure_state["cooldown-refresh"] = (
+            time.time() - aa._REFRESH_FAILURE_COOLDOWN_S - 1
+        )
+
+        with patch(
+            "agent.anthropic_adapter.refresh_anthropic_oauth_pure",
+            return_value={
+                "access_token": "fresh-access",
+                "refresh_token": "next-refresh",
+                "expires_at_ms": int(time.time() * 1000) + 3600_000,
+            },
+        ):
+            assert aa._refresh_oauth_token(creds) == "fresh-access"
+        assert "cooldown-refresh" not in aa._refresh_failure_state
+
 
 class TestRunOauthSetupToken:
     def test_raises_when_claude_not_installed(self, monkeypatch):

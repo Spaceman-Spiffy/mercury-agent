@@ -511,11 +511,20 @@ class TestRefreshOauthToken:
         # Isolate from the host's real ~/.claude credentials: the adoption
         # path re-reads the live credential file before refreshing.
         monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
+        # Neutralize live Claude Code sources (macOS Keychain + ~/.claude file)
+        # so the adopt-already-refreshed branch can't short-circuit with a real
+        # credential on a dev/CI machine that happens to have Claude Code creds.
+        monkeypatch.setattr(
+            "agent.anthropic_adapter.read_claude_code_credentials", lambda: None
+        )
         creds = {"accessToken": "expired", "refreshToken": "", "expiresAt": 0}
         assert _refresh_oauth_token(creds) is None
 
     def test_successful_refresh(self, tmp_path, monkeypatch):
         monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
+        monkeypatch.setattr(
+            "agent.anthropic_adapter.read_claude_code_credentials", lambda: None
+        )
 
         creds = {
             "accessToken": "old-token",
@@ -552,6 +561,9 @@ class TestRefreshOauthToken:
         # skip the transient-error backoff sleeps (2s/8s) the refresh path
         # now takes on network failures.
         monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
+        monkeypatch.setattr(
+            "agent.anthropic_adapter.read_claude_code_credentials", lambda: None
+        )
         creds = {
             "accessToken": "old",
             "refreshToken": "refresh-123",

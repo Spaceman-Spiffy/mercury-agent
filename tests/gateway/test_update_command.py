@@ -421,7 +421,7 @@ class TestUpdateCommandPlatformGate:
         mock_popen.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_allows_plugin_platform_via_registry_fallback(self, monkeypatch):
+    async def test_allows_plugin_platform_via_registry_fallback(self, monkeypatch, tmp_path):
         """A plugin-migrated platform (DISCORD) is no longer in
         ``_UPDATE_ALLOWED_PLATFORMS`` but must still pass the gate via
         the registry's ``allow_update_command=True`` flag.
@@ -447,7 +447,13 @@ class TestUpdateCommandPlatformGate:
         event = _make_event(platform=Platform.DISCORD)
         monkeypatch.setenv("HERMES_MANAGED", "")
 
-        with patch("subprocess.Popen"):
+        # Sandbox the marker-file writes: passing the gate means the handler
+        # writes .update_pending.json / .update_exit_code to _hermes_home,
+        # which is frozen at import time to the REAL ~/.hermes (2026-07-06
+        # telegram fixture leak). Point it at tmp_path explicitly so this
+        # test is hermetic even without the conftest safety net.
+        with patch("gateway.run._hermes_home", tmp_path), \
+             patch("subprocess.Popen"):
             result = await runner._handle_update_command(event)
 
         # The gate must NOT have rejected us — anything other than the
@@ -457,7 +463,7 @@ class TestUpdateCommandPlatformGate:
         assert "only available from messaging platforms" not in result
 
     @pytest.mark.asyncio
-    async def test_allows_mattermost_via_registry_fallback(self, monkeypatch):
+    async def test_allows_mattermost_via_registry_fallback(self, monkeypatch, tmp_path):
         """Same as DISCORD: MATTERMOST is now plugin-migrated and not in
         the hardcoded frozenset; the registry must keep /update working.
         """
@@ -476,13 +482,14 @@ class TestUpdateCommandPlatformGate:
         event = _make_event(platform=Platform.MATTERMOST)
         monkeypatch.setenv("HERMES_MANAGED", "")
 
-        with patch("subprocess.Popen"):
+        with patch("gateway.run._hermes_home", tmp_path), \
+             patch("subprocess.Popen"):
             result = await runner._handle_update_command(event)
 
         assert "only available from messaging platforms" not in result
 
     @pytest.mark.asyncio
-    async def test_allows_homeassistant_via_registry_fallback(self, monkeypatch):
+    async def test_allows_homeassistant_via_registry_fallback(self, monkeypatch, tmp_path):
         """Same as DISCORD/MATTERMOST: HOMEASSISTANT is now plugin-migrated
         (PR #40709) and not in the hardcoded frozenset; the registry must
         keep /update working via ``allow_update_command=True``.
@@ -502,13 +509,14 @@ class TestUpdateCommandPlatformGate:
         event = _make_event(platform=Platform.HOMEASSISTANT)
         monkeypatch.setenv("HERMES_MANAGED", "")
 
-        with patch("subprocess.Popen"):
+        with patch("gateway.run._hermes_home", tmp_path), \
+             patch("subprocess.Popen"):
             result = await runner._handle_update_command(event)
 
         assert "only available from messaging platforms" not in result
 
     @pytest.mark.asyncio
-    async def test_allows_builtin_platform_in_allowlist(self, monkeypatch):
+    async def test_allows_builtin_platform_in_allowlist(self, monkeypatch, tmp_path):
         """``Platform.TELEGRAM`` is in the hardcoded allowlist — gate
         must pass without consulting the registry.
         """
@@ -520,7 +528,8 @@ class TestUpdateCommandPlatformGate:
         event = _make_event(platform=Platform.TELEGRAM)
         monkeypatch.setenv("HERMES_MANAGED", "")
 
-        with patch("subprocess.Popen"):
+        with patch("gateway.run._hermes_home", tmp_path), \
+             patch("subprocess.Popen"):
             result = await runner._handle_update_command(event)
 
         assert "only available from messaging platforms" not in result

@@ -380,6 +380,30 @@ def _hermetic_environment(tmp_path, monkeypatch):
     except Exception:
         pass
 
+    # 3c. Re-bind gateway.run._hermes_home to the per-test tempdir.
+    #
+    #     Same import-time-freeze problem as 3b: ``gateway/run.py`` binds
+    #     ``_hermes_home = get_hermes_home()`` as a module global at import
+    #     time (test collection), so the env redirect above never reaches it.
+    #     Handlers that resolve it lazily (``from gateway.run import
+    #     _hermes_home`` inside ``gateway/slash_commands.py`` function bodies)
+    #     pick up the same frozen value. Any test that drives those handlers
+    #     without explicitly patching the global writes marker files
+    #     (``.update_pending.json``, ``.update_exit_code``, …) into the REAL
+    #     ~/.hermes — the running gateway then retries delivery of a
+    #     fixture-platform notification forever (2026-07-06 telegram leak).
+    #     Only patch when the module is already imported: a later lazy import
+    #     re-evaluates get_hermes_home() under the redirected HERMES_HOME and
+    #     is safe on its own. monkeypatch.setattr auto-reverts per test.
+    _gw_run = sys.modules.get("gateway.run")
+    if _gw_run is not None:
+        if hasattr(_gw_run, "_hermes_home"):
+            monkeypatch.setattr(_gw_run, "_hermes_home", fake_hermes_home)
+        if hasattr(_gw_run, "_env_path"):
+            monkeypatch.setattr(
+                _gw_run, "_env_path", fake_hermes_home / ".env"
+            )
+
     # 4. Deterministic locale / timezone / hashseed. CI runs in UTC with
     #    C.UTF-8 locale; local dev often doesn't. Pin everything.
     monkeypatch.setenv("TZ", "UTC")

@@ -412,7 +412,7 @@ def test_termux_ultrafast_version_runs_before_heavy_startup(
     # The brand name is fork-configurable (see hermes_cli.build_info); assert
     # the version label is present regardless of which brand is in effect.
     assert f"{get_brand_name()} v" in out
-    assert "Project:" in out
+    assert "Install directory:" in out
     assert "Python:" in out
     assert "OpenAI SDK:" in out
 

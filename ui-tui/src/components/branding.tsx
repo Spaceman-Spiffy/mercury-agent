@@ -3,8 +3,8 @@ import { useEffect, useState } from 'react'
 import unicodeSpinners from 'unicode-animations'
 
 import { artWidth, caduceus, CADUCEUS_WIDTH, logo, LOGO_WIDTH } from '../banner.js'
-import { MERCURY_AVATAR_ROWS, MERCURY_AVATAR_WIDTH } from '../mercuryAvatar.js'
 import { flat } from '../lib/text.js'
+import { MERCURY_AVATAR_ROWS, MERCURY_AVATAR_WIDTH } from '../mercuryAvatar.js'
 import type { Theme } from '../theme.js'
 import type { PanelSection, SessionInfo } from '../types.js'
 
@@ -168,9 +168,11 @@ export function SessionPanel({ info, maxWidth, sid, t }: SessionPanelProps) {
   // show the full art plus a usable (>=40 col) right panel. Otherwise fall back
   // to the ASCII caduceus, which is reversible by removing the skin flag.
   const useAvatar = !!t.bannerHeroAvatar && cols >= MERCURY_AVATAR_WIDTH + 4 + 40 + 14
+
   const leftW = useAvatar
     ? MERCURY_AVATAR_WIDTH + 4
     : Math.min((artWidth(heroLines) || CADUCEUS_WIDTH) + 4, Math.floor(cols * 0.4))
+
   const wide = cols >= 90 && leftW + 40 < cols
   const w = Math.max(20, wide ? cols - leftW - 14 : cols - 12)
   const lineBudget = Math.max(12, w - 2)

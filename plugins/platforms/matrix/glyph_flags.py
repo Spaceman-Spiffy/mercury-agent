@@ -77,6 +77,11 @@ GLYPH_FLAGS: dict[str, str] = {
     "\u2795": "&",     # ➕ added (& is on the chain)
     "\U0001f44d": "GO",    # 👍 approve
     "\U0001f44e": "NOGO",  # 👎 deny
+    "\u270b": "REQ",   # ✋ solicitation class — interactive prompt requesting
+                       #    commander action (exec-approval header, adapter
+                       #    _EA_HEADER). Emitted ONLY there; the phone routes
+                       #    REQ-led machine lines to the CONSOLE card and
+                       #    lights the lamp caution amber (Peter 2026-09-17).
     # -- exec-approval prompt legend (matrix adapter itself, ~line 2697) ----
     # Scope grammar (Peter 2026-08-19): GO = once, single-letter scope suffix
     # for wider grants. GO-1 was considered and rejected — a numeral suffix

@@ -2703,7 +2703,13 @@ class MatrixAdapter(BasePlatformAdapter):
     # Template attrs for the shared _format_exec_approval core. Matrix keeps
     # the smart-deny/scope wording in its local tail (reaction legend), so the
     # core is used for the header + fence + reason head only.
-    _EA_HEADER = "⚠️ **Dangerous command requires approval**\n"
+    # Leads with ✋ → REQ (glyph_flags), the solicitation-class token (Peter,
+    # 2026-09-17): types m.notice, and the phone's console-exception set
+    # routes REQ-led machine lines to the CONSOLE card with an amber lamp.
+    # Supersedes the 09-16 bare-header edit (which routed via m.text and
+    # lost the badge lamps). Do not lead with ⚠️ — that token classes the
+    # prompt as plain machine chatter and strands it on telemetry.
+    _EA_HEADER = "✋ **Dangerous command requires approval**\n"
     _EA_CMD_BUDGET = 2000
 
     async def send_exec_approval(

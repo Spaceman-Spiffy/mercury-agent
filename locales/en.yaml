@@ -44,7 +44,7 @@ gateway:
   # ("Provider:", "Context:", etc.) and the help/footer lines are localized.
   model:
     error_prefix:           "Error: {error}"
-    switched:               "Model switched to `{model}`"
+    switched:               "🔄 Model switched to `{model}`"
     provider_label:         "Provider: {provider}"
     context_label:          "Context: {tokens} tokens"
     max_output_label:       "Max output: {tokens} tokens"
@@ -117,7 +117,7 @@ gateway:
 
   debug:
     upload_failed:         "✗ Failed to upload debug report: {error}"
-    header:                "**Debug report uploaded:**"
+    header:                "◆ **Debug report uploaded:**"
     auto_delete:           "⏱ Pastes will auto-delete in 6 hours."
     full_logs_hint:        "For full log uploads, use `hermes debug share` from the CLI."
     share_hint:            "Share these links with the Hermes team for support."

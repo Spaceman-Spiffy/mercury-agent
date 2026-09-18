@@ -20573,6 +20573,39 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                             f"-# {ln}" if ln else "-#" for ln in display_reasoning.splitlines()
                         )
                         response = f"-# 💭 Reasoning\n{_quoted}\n\n{response}"
+                    elif _reasoning_style == "plain":
+                        # Leading marker, no wrapper, and delivered as its OWN
+                        # message rather than prepended to the reply.
+                        #
+                        # Why separate: every other style CONCATENATES reasoning
+                        # onto `response`, so one string -> one event -> ONE
+                        # msgtype and ONE header. A client that headers machine
+                        # lines (m.notice) differently from prose (m.text)
+                        # therefore cannot draw a boundary between the thinking
+                        # and the reply — they arrive as a single undifferentiated
+                        # run. Splitting gives reasoning its own m.notice bubble
+                        # and leaves the reply to render as prose.
+                        #
+                        # Why not blockquote/subtext: those prefix every line
+                        # ("> ", "-# "), which moves the leading marker out of
+                        # position. The Matrix adapter's provenance test
+                        # (glyph_flags.leads_with_machine_marker) reads
+                        # stripped[0], so a prefixed line keeps its raw emoji
+                        # instead of rewriting to the chain token AND types as
+                        # m.text prose. Verified 2026-09-12 against the real
+                        # functions.
+                        #
+                        # Failure here must not cost the reply: on any error the
+                        # reasoning is dropped and `response` is delivered
+                        # unchanged by the normal path below.
+                        try:
+                            await self._deliver_platform_notice(
+                                source, f"💭 **Reasoning:**\n{display_reasoning}"
+                            )
+                        except Exception as _reasoning_err:
+                            logger.debug(
+                                "reasoning notice delivery failed: %s", _reasoning_err
+                            )
                     elif _reasoning_style == "blockquote":
                         _quoted = "\n".join(
                             f"> {ln}" if ln else ">" for ln in display_reasoning.splitlines()

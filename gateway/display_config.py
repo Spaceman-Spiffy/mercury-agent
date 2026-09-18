@@ -302,7 +302,7 @@ def _normalise(setting: str, value: Any) -> Any:
         return val if val in ("accumulate", "separate") else "accumulate"
     if setting == "reasoning_style":
         val = str(value).lower()
-        return val if val in ("code", "blockquote", "subtext") else "code"
+        return val if val in ("code", "blockquote", "subtext", "plain") else "code"
     if setting == "tool_preview_length":
         try:
             return int(value)

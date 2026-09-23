@@ -2784,6 +2784,69 @@ class MatrixAdapter(BasePlatformAdapter):
 
         return result
 
+    # Clarify prompts lead with ✋ → REQ exactly like _EA_HEADER above
+    # (Peter 2026-09-23: plate reads "Query", same caution-amber REQ lamp
+    # as the danger gate). Without this override, clarify fell through to
+    # the base-class text sender: its ❓ head is NOT in glyph_flags, so the
+    # line never became a REQ-led machine line and rode the telemetry rail
+    # instead of the CONSOLE card — four expired prompts on 2026-09-23
+    # traced to the user never seeing them. Same fault class the 09-17
+    # _EA_HEADER fix closed for exec approvals; this closes the sibling
+    # emitter. The phone's solicitation-routing predicate keys on the REQ
+    # token generically, so no app-side change is needed.
+    _CLARIFY_HEADER = "✋ **Query**\n"
+
+    async def send_clarify(
+        self,
+        chat_id: str,
+        question: str,
+        choices: Optional[list],
+        clarify_id: str,
+        session_key: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send a clarify prompt as a REQ-led notice (console card + amber lamp).
+
+        Mirrors the base implementation's reply contract exactly — numbered
+        text list, gateway text-intercept resolution — changing only the
+        line-leading token so the message classes as a solicitation.
+        """
+        if choices:
+            # Multi-select clarifies register their flag on the pending
+            # entry; look it up by id (same probe as the base class).
+            _is_multi = False
+            try:
+                from tools import clarify_gateway as _cg
+                with _cg._lock:
+                    _entry = _cg._entries.get(clarify_id)
+                _is_multi = bool(_entry and getattr(_entry, "multi_select", False))
+            except Exception:
+                _is_multi = False
+            lines = [f"{self._CLARIFY_HEADER}{question}", ""]
+            for i, choice in enumerate(choices, start=1):
+                lines.append(f"  {i}. {choice}")
+            lines.append("")
+            if _is_multi:
+                lines.append(
+                    "Multiple selections allowed — reply with the numbers "
+                    "separated by commas or spaces (e.g. \"1, 3\"), the option "
+                    "text, or your own answer."
+                )
+            else:
+                lines.append("Reply with the number, the option text, or your own answer.")
+            text = "\n".join(lines)
+            # Text fallback: enable text-capture so the gateway intercept
+            # picks up the user's typed reply (e.g. "2" or choice text).
+            from tools.clarify_gateway import mark_awaiting_text
+            mark_awaiting_text(clarify_id)
+        else:
+            text = f"{self._CLARIFY_HEADER}{question}"
+        return await self.send(
+            chat_id=chat_id,
+            content=text,
+            metadata=metadata,
+        )
+
     async def send_model_picker(
         self,
         chat_id: str,

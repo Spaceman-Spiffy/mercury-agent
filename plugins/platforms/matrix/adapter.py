@@ -2407,6 +2407,13 @@ class MatrixAdapter(BasePlatformAdapter):
                 EventType.ROOM_MESSAGE,
                 msg_content,
             )
+            # MERCURY FORK telemetry: the shipped row order is the only ground-side evidence of what
+            # the MercuryTerm sessions card renders (the app keeps server order and derives its
+            # dates from the id prefix). One line per reply; ids only.
+            shipped = [str(s.get("id") or "?") for s in (payload.get("sessions") or [])]
+            logger.info("Matrix: sessions-panel reply to %s — %d rows%s: %s%s", room_id, len(shipped),
+                        " (error=%s)" % payload["error"] if payload.get("error") else "",
+                        ", ".join(shipped[:6]), " …" if len(shipped) > 6 else "")
         except Exception as exc:
             logger.warning("Matrix: sessions-panel reply send failed: %s", exc)
 

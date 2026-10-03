@@ -35,6 +35,15 @@ _RESET_CLEANUP_TIMEOUT_S = 30.0
 # chat_type values whose session key is per-user (DM-like), incl. the unknown/blank case.
 _DM_CHAT_TYPES = {"dm", "direct", "private", ""}
 
+# MERCURY FORK (Option B — permanent divergence; 48b9d62886, re-applied after the 651b522573
+# merge; see INTEGRATION.md and skill maintained-fork-workflow): single-user, single-DM deploy.
+# Upstream's origin scoping (#18505 Matrix room isolation + CWE-639 owner proof) only ever hid
+# the commander's own history from him — the routing store keeps ONE entry per room, so every
+# earlier session read as "no recorded room origin".  With scoping off, /resume and /sessions
+# reach every session by id/title and listings span all session keys of the platform.
+# Set MERCURY_SESSION_SCOPING=1 to run upstream's scoped behaviour unchanged.
+_MERCURY_UNSCOPED_SESSIONS = os.environ.get("MERCURY_SESSION_SCOPING", "").strip() not in {"1", "true", "yes"}
+
 _BRANCH_COPIED_FIELDS = ("content", "tool_calls", "tool_call_id", "finish_reason", "reasoning",
                          "reasoning_content", "reasoning_details", "codex_reasoning_items",
                          "codex_message_items", "timestamp")
@@ -406,6 +415,8 @@ class GatewaySessionCommandsMixin:
     async def _resume_row_visible(self, source: SessionSource, row: dict, allow_all: bool) -> bool:
         """Whether a listing *row* belongs to the caller's origin (blocks cross-origin enumeration of
         ids/previews); Matrix is room-scoped, ``--all`` needs a configured admin everywhere."""
+        if _MERCURY_UNSCOPED_SESSIONS:
+            return True
         if allow_all and self._resume_caller_is_admin(source):
             return True
         sid = str(row.get("id") or "")
@@ -852,7 +863,7 @@ class GatewaySessionCommandsMixin:
 
     async def _list_titled_sessions(self, source, session_key: str, allow_all: bool) -> list[dict]:
         """Titled sessions visible to the caller (origin-scoped unless admin ``--all``)."""
-        widen = allow_all and self._resume_caller_is_admin(source)
+        widen = _MERCURY_UNSCOPED_SESSIONS or (allow_all and self._resume_caller_is_admin(source))
         # Rank by lineage activity, not root started_at: a lineage compressed for days is projected
         # onto its live tip and must sit where the user last touched it (#114271).
         sessions = await self._session_db.list_sessions_rich(
@@ -891,6 +902,8 @@ class GatewaySessionCommandsMixin:
                                           allow_cross_room: bool) -> Optional[str]:
         """IDOR guard: a session id/title is a routing handle, not authority — bind /resume to the
         caller's own room (Matrix) or platform/user/chat (other adapters)."""
+        if _MERCURY_UNSCOPED_SESSIONS:
+            return None
         if source.platform == Platform.MATRIX:
             target_origin = self._gateway_session_origin_for_id(target_id)
             if self._same_matrix_room(source, target_origin) or allow_cross_room:
@@ -974,7 +987,7 @@ class GatewaySessionCommandsMixin:
         """Numbered /resume list; a non-admin ``--all`` falls back to same-origin scoping and says so
         (sibling of the /sessions notice)."""
         scope_note = None
-        if allow_all and not self._resume_caller_is_admin(source):
+        if allow_all and not _MERCURY_UNSCOPED_SESSIONS and not self._resume_caller_is_admin(source):
             scope_note = t("gateway.resume.all_requires_admin")
         if not titled:
             if source.platform == Platform.MATRIX and not allow_all:
@@ -1015,7 +1028,7 @@ class GatewaySessionCommandsMixin:
         session_key = self._session_key_for_source(source)
         # `/sessions all` is admin-only like `/resume --all` (else any caller could enumerate other
         # origins' ids/titles/previews); a non-admin gets explicit feedback, not a silent narrowing.
-        cross_origin = include_all and self._resume_caller_is_admin(source)
+        cross_origin = _MERCURY_UNSCOPED_SESSIONS or (include_all and self._resume_caller_is_admin(source))
         scope_notice = None
         if include_all and not cross_origin:
             scope_notice = t("gateway.sessions.all_requires_admin")

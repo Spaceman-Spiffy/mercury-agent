@@ -20242,7 +20242,7 @@ def test_session_usage_includes_account_lines(monkeypatch):
 
     monkeypatch.setattr("agent.account_usage.fetch_account_usage", _fake_fetch)
     monkeypatch.setattr(
-        "agent.account_usage.render_account_usage_block",
+        "agent.account_usage.render_account_usage_lines",
         lambda snap, **_kw: ["Current session", "░░░░  2% used", "Resets 11:40am (America/New_York)"],
     )
     # Keep the Nous credits portal path out of this test — it is exercised

@@ -1447,47 +1447,9 @@ def _(rid, params: dict, session: dict) -> dict:
     usage: dict = _session_usage_snapshot(session)
     if session.get("agent") is None and not usage:
         usage = {"calls": 0, "input": 0, "output": 0, "total": 0}
-    # MERCURY FORK (84cbc2763): account limits (Anthropic OAuth / OpenAI-Codex /
-    # OpenRouter) — the same provider-account block the CLI _show_usage and the
-    # gateway _handle_usage_command render. Resolve provider/base_url/api_key
-    # from the live agent, falling back to persisted billing data on the
-    # session DB row. Off-thread fetch, hard 10s timeout, fail-open.
-    provider = getattr(agent, "provider", None) if agent is not None else None
-    base_url = getattr(agent, "base_url", None) if agent is not None else None
-    api_key = getattr(agent, "api_key", None) if agent is not None else None
-    if not provider:
-        try:
-            db = _get_db()
-            key = session.get("session_key") or params.get("session_id") or ""
-            row: dict = {}
-            if db is not None and key:
-                row = db.get_session(key) or {}
-            overrides = _stored_session_runtime_overrides(row)
-            provider = overrides.get("provider_override") or row.get("billing_provider")
-            base_url = base_url or row.get("billing_base_url")
-        except Exception:
-            pass
-    if provider:
-        try:
-            import concurrent.futures
-
-            from agent.account_usage import (
-                fetch_account_usage,
-                render_account_usage_block,
-            )
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
-                snap = _pool.submit(
-                    fetch_account_usage,
-                    provider,
-                    base_url=base_url,
-                    api_key=api_key,
-                ).result(timeout=10.0)
-            account_lines = render_account_usage_block(snap)
-            if account_lines:
-                usage["account_lines"] = account_lines
-        except Exception:
-            pass
+    # MERCURY FORK (84cbc2763, retired 2026-10-03): the fork's own account-limits block lived here;
+    # upstream rebuilt the same feature as _account_usage_lines() below (same providers via
+    # fetch_account_usage; falls back to the configured model.provider). Converged on upstream's.
     # Nous credits block — agent-independent (a portal fetch), so it shows even
     # with zero API calls or on a resumed session. The TUI /usage panel renders
     # these lines regardless of `calls`. Fail-open: [] when not logged into Nous

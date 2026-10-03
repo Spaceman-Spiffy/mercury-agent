@@ -340,7 +340,8 @@ class CLITuiMixin:
         if self._command_running:
             return _state_fragment("class:prompt-working", self._command_spinner_frame())
         if self._agent_running:
-            return _state_fragment("class:prompt-working", "☤")
+            # MERCURY FORK: working-state glyph comes from the active skin (CLIStatusBarMixin._brand_icon).
+            return _state_fragment("class:prompt-working", self._brand_icon())
         if self._voice_mode:
             return _state_fragment("class:voice-prompt", "🎤")
         return [("class:prompt", symbol)]

@@ -91,6 +91,41 @@ logger = logging.getLogger(__name__)
 _MATRIX_VOICE_WAVEFORM_BINS = 30
 
 
+def _brand_outbound(content: str, chat_id: str = "") -> str:
+    """MERCURY FORK: brand-word pass at the adapter's outbound chokepoint.
+
+    The ``transform_llm_output`` / ``transform_gateway_notice`` hooks only see
+    LLM text and lifecycle notices. Slash-command replies, upstream error
+    strings (``tui_gateway/user_messages.py``) and the shutdown banner reach
+    the room without passing any hook, so the brand word leaked on those
+    paths. Every text class exits this adapter through ``send()`` or
+    ``edit_message()``; running the same guarded ``_apply`` here closes the
+    class instead of chasing strings.
+
+    Idempotent on text the finalizer already rewrote (no match -> no edit),
+    fail-open on any error, and a no-op when the plugin is disabled (its
+    module is then absent from ``hermes_plugins`` and the import raises).
+    """
+    if not content:
+        return content
+    try:
+        from hermes_plugins.mercury_substitution import (  # type: ignore
+            _apply as _brand_apply,
+            _log_edits as _brand_log,
+        )
+    except Exception:
+        return content
+    try:
+        new_text, edits = _brand_apply(content)
+        if edits and new_text != content:
+            _brand_log(edits, session_id=f"matrix-outbound:{chat_id}", platform="matrix")
+            return new_text
+        return content
+    except Exception as exc:
+        logger.debug("Matrix: brand pass failed, passing through: %s", exc)
+        return content
+
+
 def _run_media_tool(cmd: list, *, timeout: int, text: bool = False):
     """Run ffmpeg/ffprobe with captured output and no stdin."""
     return subprocess.run(cmd, capture_output=True, text=text, timeout=timeout, stdin=subprocess.DEVNULL)
@@ -1463,6 +1498,8 @@ class MatrixAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None) -> SendResult:
         if not content:
             return SendResult(success=True)
+        # MERCURY FORK: brand pass on every outbound text class (see _brand_outbound).
+        content = _brand_outbound(content, chat_id)
         # Machine-provenance typing (fork-only, Mercury): lines that lead
         # with a known event emoji are automated output — sent as m.notice
         # (the spec's bot-emission msgtype) so clients can render them as
@@ -1554,6 +1591,8 @@ class MatrixAdapter(BasePlatformAdapter):
         await self._set_typing(chat_id, 0)
 
     async def edit_message(self, chat_id: str, message_id: str, content: str, *, finalize: bool = False) -> SendResult:
+        # MERCURY FORK: brand pass on every outbound text class (see _brand_outbound).
+        content = _brand_outbound(content, chat_id)
         # Same machine-provenance typing as send(): pure function of the
         # content, so every edit of a streamed message classifies the same
         # way and the msgtype never flips mid-stream.

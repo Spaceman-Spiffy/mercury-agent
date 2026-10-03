@@ -17,8 +17,8 @@ The fix routes textless structured reasoning to the synthetic-user nudge
 import inspect
 from types import SimpleNamespace
 
-from agent import conversation_loop
-from agent.conversation_loop import _reasoning_has_visible_text
+from agent import turn_empty_response
+from agent.turn_empty_response import _reasoning_has_visible_text
 
 
 def _msg(**kwargs):
@@ -94,11 +94,12 @@ def test_non_dict_details_are_tolerated():
 
 
 # ── loop wiring invariants ───────────────────────────────────────────
-# run_conversation is a 3,900-line closure-heavy loop; full harness tests
-# live elsewhere.  These source-level invariants pin the recovery routing
-# the same way test_gemini_fast_fallback.py pins the pool-helper call site.
+# recover_empty_response is the empty/thinking-only recovery ladder (moved out of
+# the 3,900-line run_conversation closure into its own module). These source-level
+# invariants pin the recovery routing the same way test_gemini_fast_fallback.py
+# pins the pool-helper call site.
 
-_SOURCE = inspect.getsource(conversation_loop.run_conversation)
+_SOURCE = inspect.getsource(turn_empty_response.recover_empty_response)
 
 
 def test_prefill_branch_requires_visible_reasoning():
@@ -125,7 +126,7 @@ def test_hidden_thinking_nudge_fires_once_then_falls_through_to_retries():
     """After the nudge is spent, a repeat hidden-thinking response must
     qualify as prefill-exhausted so the empty-retry/fallback path runs
     instead of looping forever."""
-    idx = _SOURCE.index("_prefill_exhausted = (")
+    idx = _SOURCE.index("_empty_candidate = _truly_empty and (")
     window = _SOURCE[idx:idx + 500]
     assert "_hidden_thinking_nudged" in window
     assert "not _has_visible_reasoning" in window
@@ -134,4 +135,6 @@ def test_hidden_thinking_nudge_fires_once_then_falls_through_to_retries():
 def test_turn_context_resets_hidden_thinking_flag():
     from agent import turn_context
     src = inspect.getsource(turn_context)
-    assert "agent._hidden_thinking_nudged = False" in src
+    # Reset now flows through the _PER_TURN_RESET_STATE tuple (upstream's refactor
+    # applies every entry via setattr in a loop), not a literal assignment line.
+    assert '("_hidden_thinking_nudged", False)' in src

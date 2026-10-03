@@ -37,10 +37,10 @@ def _import_evdev():
     this path — perception must not depend on an install succeeding.
     """
     try:
-        from tools.lazy_deps import ensure as _lazy_ensure
-        _lazy_ensure("screen.uinput", prompt=False)
+        from pm.extras import ensure_import as _ensure_import
+        _ensure_import("screen")
     except Exception:
-        pass  # FeatureUnavailable / no lazy_deps — let the import speak
+        pass  # InstallError / platform-unsupported — let the import speak
     import evdev
     return evdev
 

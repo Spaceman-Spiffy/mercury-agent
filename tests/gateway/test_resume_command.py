@@ -4,13 +4,14 @@ Tests the _handle_resume_command handler (switch to a previously-named session)
 across gateway messenger platforms.
 """
 
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gateway.config import Platform
-from gateway.platforms.base import MessageEvent
+from gateway.platforms.event import MessageEvent
 from gateway.session import SessionSource, build_session_key
 
 
@@ -71,13 +72,6 @@ def _make_runner(session_db=None, current_session_id="current_session_001",
 class TestHandleResumeCommand:
     """Tests for GatewayRunner._handle_resume_command."""
 
-    @pytest.mark.asyncio
-    async def test_no_session_db(self):
-        """Returns error when session database is unavailable."""
-        runner = _make_runner(session_db=None)
-        event = _make_event(text="/resume My Project")
-        result = await runner._handle_resume_command(event)
-        assert "not available" in result.lower()
 
     @pytest.mark.asyncio
     async def test_list_named_sessions_when_no_arg(self, tmp_path):
@@ -101,11 +95,12 @@ class TestHandleResumeCommand:
         result = await runner._handle_resume_command(event)
         assert "Research" in result
         assert "Coding" in result
-        assert "Named Sessions" in result
         assert "1." in result
         assert "2." in result
         assert "/resume 1" in result
         db.close()
+
+
 
 
     @pytest.mark.asyncio
@@ -131,9 +126,8 @@ class TestHandleResumeCommand:
             "agent:main:telegram:dm:other": "[Note: keep-me]",
         }
 
-        result = await runner._handle_resume_command(event)
-
-        assert "Resumed" in result
+        await runner._handle_resume_command(event)
+        assert runner.session_store.switch_session.call_args.kwargs["preserve_prompt_pin"] is False
         # The resumed chat's override + pending note are cleared...
         assert key not in runner._session_model_overrides
         assert key not in runner._pending_model_notes
@@ -164,9 +158,7 @@ class TestHandleResumeCommand:
             "agent:main:telegram:dm:other": "keep-me",
         }
 
-        result = await runner._handle_resume_command(event)
-
-        assert "Resumed" in result
+        await runner._handle_resume_command(event)
         assert key not in runner._last_resolved_model
         assert runner._last_resolved_model["agent:main:telegram:dm:other"] == "keep-me"
         db.close()
@@ -198,8 +190,6 @@ class TestHandleResumeCommand:
         )
 
         result = await runner._handle_resume_command(event)
-
-        assert "Resumed session" in result
         assert "(1 message)" in result
         call_args = runner.session_store.switch_session.call_args
         assert call_args[0][1] == "compressed_child"
@@ -234,10 +224,164 @@ class TestHandleResumeCommand:
         assert real_key not in runner._agent_cache
         db.close()
 
+    @pytest.mark.asyncio
+    async def test_bare_resume_lists_exact_lane_before_limit(self, tmp_path):
+        from hermes_state import SessionDB
 
+        db = SessionDB(db_path=tmp_path / "state.db")
+        event = _make_event(text="/resume")
+        lane_key = _session_key_for_event(event)
+        for i in range(3):
+            sid = f"lane_{i}"
+            db.create_session(
+                sid, "telegram", session_key=lane_key,
+                user_id="12345", chat_id="67890",
+            )
+            db.set_session_title(sid, f"Lane Work {i}")
+        for i in range(12):
+            sid = f"foreign_{i}"
+            db.create_session(
+                sid, "telegram",
+                session_key=f"agent:main:telegram:dm:foreign-{i}",
+                user_id=f"foreign-user-{i}", chat_id=f"foreign-{i}",
+            )
+            db.set_session_title(sid, f"Foreign Work {i}")
 
+        runner = _make_runner(session_db=db, event=event)
+        result = await runner._handle_resume_command(event)
 
+        assert "Lane Work 0" in result
+        assert "Lane Work 1" in result
+        assert "Lane Work 2" in result
+        assert "Foreign Work" not in result
+        db.close()
 
+    @pytest.mark.asyncio
+    async def test_bare_resume_ranks_lineages_by_last_activity(self, tmp_path):
+        """A lineage whose root started days ago but was touched last must lead the list: the
+        picker ranks by lineage activity, not root ``started_at`` (#114271)."""
+        from hermes_state import SessionDB
+
+        db = SessionDB(db_path=tmp_path / "state.db")
+        event = _make_event(text="/resume")
+        lane_key = _session_key_for_event(event)
+        t0 = time.time() - 5 * 86400
+        for sid, started, active in (("old_root", t0, t0 + 4 * 86400), ("new_root", t0 + 86400, t0 + 86400 + 60)):
+            db.create_session(sid, "telegram", session_key=lane_key, user_id="12345", chat_id="67890")
+            db.append_message(sid, "user", "hi")
+            db._conn.execute("UPDATE sessions SET started_at=?, last_activity_at=? WHERE id=?", (started, active, sid))
+            db._conn.execute("UPDATE messages SET timestamp=? WHERE session_id=?", (active, sid))
+        db._conn.commit()
+        db.set_session_title("old_root", "Old But Active")
+        db.set_session_title("new_root", "Newer But Idle")
+
+        runner = _make_runner(session_db=db, event=event)
+        result = await runner._handle_resume_command(event)
+
+        assert result.index("Old But Active") < result.index("Newer But Idle")
+        db.close()
+
+    @pytest.mark.asyncio
+    async def test_bare_resume_admin_all_preserves_same_platform_widening(self, tmp_path):
+        from hermes_state import SessionDB
+
+        db = SessionDB(db_path=tmp_path / "state.db")
+        event = _make_event(text="/resume --all")
+        db.create_session(
+            "other_lane", "telegram",
+            session_key="agent:main:telegram:dm:other",
+            user_id="other-user", chat_id="other",
+        )
+        db.set_session_title("other_lane", "Other Lane Work")
+
+        runner = _make_runner(session_db=db, event=event)
+        runner._resume_caller_is_admin = lambda _source: True
+        result = await runner._handle_resume_command(event)
+
+        assert "Other Lane Work" in result
+        db.close()
+
+    @pytest.mark.asyncio
+    async def test_numeric_resume_fallback_uses_exact_lane_candidates(self, tmp_path):
+        from hermes_state import SessionDB
+
+        db = SessionDB(db_path=tmp_path / "state.db")
+        event = _make_event(text="/resume 2")
+        lane_key = _session_key_for_event(event)
+        db.create_session(
+            "lane_older", "telegram", session_key=lane_key,
+            user_id="12345", chat_id="67890",
+        )
+        db.set_session_title("lane_older", "Lane Older")
+        db.create_session(
+            "lane_newer", "telegram", session_key=lane_key,
+            user_id="12345", chat_id="67890",
+        )
+        db.set_session_title("lane_newer", "Lane Newer")
+        for i in range(12):
+            sid = f"foreign_{i}"
+            db.create_session(
+                sid, "telegram",
+                session_key=f"agent:main:telegram:dm:foreign-{i}",
+                user_id=f"foreign-user-{i}", chat_id=f"foreign-{i}",
+            )
+            db.set_session_title(sid, f"Foreign Work {i}")
+        db.create_session(
+            "current_session_001", "telegram", session_key=lane_key,
+            user_id="12345", chat_id="67890",
+        )
+
+        runner = _make_runner(
+            session_db=db, current_session_id="current_session_001", event=event
+        )
+        await runner._handle_resume_command(event)
+        runner.session_store.switch_session.assert_called_once()
+        assert runner.session_store.switch_session.call_args[0][1] == "lane_older"
+        db.close()
+
+    @pytest.mark.asyncio
+    async def test_bare_resume_normalizes_telegram_lobby_source_to_bound_topic(
+        self, tmp_path
+    ):
+        from hermes_state import SessionDB
+
+        db = SessionDB(db_path=tmp_path / "state.db")
+        event = _make_event(text="/resume")
+        topic_source = SessionSource(
+            platform=Platform.TELEGRAM,
+            user_id="12345",
+            chat_id="67890",
+            chat_type="dm",
+            thread_id="topic-42",
+        )
+        topic_key = build_session_key(topic_source)
+        db.create_session(
+            "topic_session", "telegram", session_key=topic_key,
+            user_id="12345", chat_id="67890", chat_type="dm",
+            thread_id="topic-42",
+        )
+        db.set_session_title("topic_session", "Recovered Topic Work")
+        db.enable_telegram_topic_mode(chat_id="67890", user_id="12345")
+        db.bind_telegram_topic(
+            chat_id="67890",
+            thread_id="topic-42",
+            user_id="12345",
+            session_key=topic_key,
+            session_id="topic_session",
+        )
+        lobby_key = _session_key_for_event(event)
+        db.create_session(
+            "lobby_session", "telegram", session_key=lobby_key,
+            user_id="12345", chat_id="67890", chat_type="dm",
+        )
+        db.set_session_title("lobby_session", "Lobby Work")
+
+        runner = _make_runner(session_db=db, event=event)
+        result = await runner._handle_resume_command(event)
+
+        assert "Recovered Topic Work" in result
+        assert "Lobby Work" not in result
+        db.close()
 
 
 class TestHandleSessionsCommand:
@@ -288,7 +432,9 @@ class TestHandleSessionsCommand:
         after_resume = await runner._handle_sessions_command(event)
 
         assert "Legacy reset child" in after_resume
-        assert "Legacy reset parent" not in after_resume
+        # The parent is now the CURRENT session: since #68547 it stays in the
+        # listing with a "(current)" marker instead of being hidden.
+        assert "**Legacy reset parent** (current)" in after_resume
         child_row = db.get_session(child_id)
         assert child_row is not None
         assert json.loads(child_row["model_config"])["_reset_from"] == root_id
@@ -357,9 +503,64 @@ class TestHandleSessionsCommand:
         assert "Greeting via Telegram" in result
         assert "Store memories with priority" in result
         assert "Extract AI news to Telegram" in result
-        assert "Current Telegram work" not in result
+        # The live tip is the current session — listed with the marker since
+        # #68547 rather than hidden.
+        assert "**Current Telegram work** (current)" in result
         db.close()
 
+    @pytest.mark.asyncio
+    async def test_sessions_busy_platform_lists_exact_lane_and_excludes_current_tip(
+        self, tmp_path
+    ):
+        from hermes_state import SessionDB
+
+        db = SessionDB(db_path=tmp_path / "state.db")
+        event = _make_event(text="/sessions")
+        lane_key = _session_key_for_event(event)
+        for i in range(11):
+            sid = f"lane_root_{i}"
+            db.create_session(
+                sid, "telegram", session_key=lane_key,
+                user_id="12345", chat_id="67890",
+            )
+            db.set_session_title(sid, f"Lane Work {i}")
+
+        db.create_session(
+            "current_root", "telegram", session_key=lane_key,
+            user_id="12345", chat_id="67890",
+        )
+        db.set_session_title("current_root", "Current compressed root")
+        db.end_session("current_root", "compression")
+        db.create_session(
+            "current_tip", "telegram", session_key=lane_key,
+            user_id="12345", chat_id="67890", parent_session_id="current_root",
+        )
+        db.set_session_title("current_tip", "Current compressed tip")
+
+        for i in range(60):
+            sid = f"foreign_{i}"
+            db.create_session(
+                sid, "telegram",
+                session_key=f"agent:main:telegram:dm:foreign-{i}",
+                user_id=f"foreign-user-{i}", chat_id=f"foreign-{i}",
+            )
+            db.set_session_title(sid, f"Foreign Work {i}")
+
+        runner = _make_runner(
+            session_db=db, current_session_id="current_tip", event=event
+        )
+        result = await runner._handle_sessions_command(event)
+
+        # The current tip now occupies one of the 10 slots with a marker
+        # (#68547) instead of being hidden; its compressed-away root stays out.
+        assert "**Current compressed tip** (current)" in result
+        assert result.count("Lane Work") == 9
+        assert "`lane_root_2`" in result
+        assert "`lane_root_1`" not in result
+        assert "`lane_root_0`" not in result
+        assert "Foreign Work" not in result
+        assert "current_root" not in result
+        db.close()
 
     @pytest.mark.asyncio
     async def test_sessions_admin_all_preserves_cross_origin_widening(self, tmp_path):

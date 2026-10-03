@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import json
 import logging
 import os
 import shlex
@@ -247,15 +248,51 @@ class GatewaySessionCommandsMixin:
     # ------------------------------------------------------- origin / ownership guards
 
     def _gateway_session_origin_for_id(self, session_id: str) -> Optional[SessionSource]:
-        """Best-effort origin lookup for gateway session IDs."""
+        """Best-effort origin lookup for gateway session IDs.
+
+        The routing store holds ONE entry per session key (the room's *current* session), so every
+        earlier session of the same room resolves to ``None`` there even though its row keeps the
+        opening origin in ``origin_json``.  Fall back to that row (same pattern as
+        ``run_topics._resolve_auto_thread_lane``) so ``/resume <older session>`` in its own room is
+        recognised as same-room instead of being refused as "no recorded room origin"."""
         lookup = getattr(type(self.session_store), "lookup_by_session_id", None)
         if callable(lookup):
             entry = lookup(self.session_store, session_id)
-            return getattr(entry, "origin", None) if entry is not None else None
+            if entry is not None and getattr(entry, "origin", None) is not None:
+                return entry.origin
+            return self._persisted_session_origin(session_id)
         # Test doubles / older stores lack the public lookup; fail closed when nothing resolves.
         entries = getattr(self.session_store, "_entries", {}) or {}
         return next((getattr(e, "origin", None) for e in entries.values()
                      if getattr(e, "session_id", None) == session_id), None)
+
+    def _persisted_session_origin(self, session_id: str) -> Optional[SessionSource]:
+        """Origin recorded on the session row (``origin_json``), or ``None`` when the row is absent,
+        the store exposes no DB, or the JSON is malformed/legacy.  Read-only; never raises."""
+        if not session_id:
+            return None
+        db_for_id = getattr(self.session_store, "_db_for_session_id", None)
+        if not callable(db_for_id):
+            return None
+        try:
+            db = db_for_id(session_id)
+            row = db.get_session(session_id) if db is not None else None
+        except Exception as exc:  # DB unavailable: behave exactly as before the fallback existed
+            logger.debug("origin_json lookup failed for %s: %s", session_id, exc)
+            return None
+        raw = (row or {}).get("origin_json")
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        try:
+            return SessionSource.from_dict(data)
+        except (KeyError, TypeError, ValueError):
+            return None
 
     @staticmethod
     def _same_matrix_room(current: SessionSource, origin: Optional[SessionSource]) -> bool:

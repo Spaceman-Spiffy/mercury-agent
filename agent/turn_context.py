@@ -115,6 +115,17 @@ def compose_multimodal_context_part(
     return "\n\n".join(injections) if injections else None
 
 
+def ephemeral_recall_enabled(agent: Any) -> bool:
+    """``memory.ephemeral_recall``: memory prefetch is injected for the CURRENT turn only.
+
+    Off (default) keeps the "persist what you send" contract: prefetch rides the ``api_content``
+    sidecar and replays on every later turn. On, the persisted sidecar omits the prefetch block
+    (history does not grow by it) while the current turn's wire copy still carries it. Trade-off:
+    the prior turn's user row changes bytes between turns, so the provider prompt cache misses
+    from that row onward once per turn; the prefix before it stays cached."""
+    return bool(getattr(agent, "_ephemeral_recall", False))
+
+
 def compose_user_api_content(
     content: Any, ext_prefetch_cache: str, plugin_user_context: str
 ) -> Optional[str]:
@@ -931,9 +942,12 @@ def _stamp_api_content_sidecar(
     live_content = _turn_user_msg.get("content")
     from agent.session_persistence import _persist_lock, durable_user_row_content
     # Match the row the flush wrote (persist override = clean transcript), not the live bytes.
+    # Ephemeral recall: the persisted sidecar is composed WITHOUT the prefetch block; the wire copy
+    # for this turn is composed live in build_api_messages.
+    _sidecar_prefetch = "" if ephemeral_recall_enabled(agent) else ext_prefetch_cache
     durable_content, _api_content = durable_user_row_content(
         agent, _turn_user_msg, live_content,
-        compose_user_api_content(live_content or "", ext_prefetch_cache, plugin_user_context),
+        compose_user_api_content(live_content or "", _sidecar_prefetch, plugin_user_context),
     )
     if _api_content is None or _api_content == durable_content:
         return
@@ -1272,7 +1286,9 @@ def build_api_messages(
         # Inject ephemeral context (memory prefetch + pre_llm_call user hooks)
         # at API time only; `messages` is untouched beyond the api_content stamp.
         if msg is current_turn_message and msg.get("role") == "user":
-            if isinstance(_api_content, str) and _api_content:
+            # Ephemeral recall: the stamp deliberately lacks the prefetch block, so compose live.
+            _recall_live = ephemeral_recall_enabled(agent) and bool(ext_prefetch_cache)
+            if isinstance(_api_content, str) and _api_content and not _recall_live:
                 # Reuse the prologue's stamp so sidecar and wire cannot drift
                 # and every pass this turn sends identical bytes.
                 api_msg["content"] = _api_content

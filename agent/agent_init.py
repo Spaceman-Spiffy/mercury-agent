@@ -1359,6 +1359,16 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
                 )
                 agent._memory_store.load_from_disk()
 
+    # memory.ephemeral_recall: prefetch is injected for the current turn only, never stored (see
+    # agent.turn_context.ephemeral_recall_enabled). Default off.
+    agent._ephemeral_recall = False
+    _ephemeral_spill_chars = None
+    with suppress(Exception):
+        from tools.memory_tool import get_builtin_memory_config
+        _eph_cfg = get_builtin_memory_config(_agent_cfg)
+        agent._ephemeral_recall = bool(_eph_cfg.get("ephemeral_recall", False))
+        _ephemeral_spill_chars = int(_eph_cfg.get("ephemeral_recall_max_chars", 24000))
+
     # External memory provider plugin (one at a time, alongside built-in): memory.provider.
     agent._memory_manager = None
     if memory_manager is not None and not skip_memory:
@@ -1397,6 +1407,12 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
         except Exception as _mpe:
             _ra().logger.warning("Memory provider plugin init failed: %s", _mpe)
             agent._memory_manager = None
+
+    # Ephemeral recall no longer accumulates in history, so lift the prefetch spill cap (covers both
+    # a freshly built manager and one handed back by a per-turn rebuilding caller).
+    if agent._ephemeral_recall and agent._memory_manager is not None:
+        with suppress(Exception):
+            agent._memory_manager.set_prefetch_spill_cap(_ephemeral_spill_chars)
 
     from agent.memory_manager import inject_memory_provider_tools
     inject_memory_provider_tools(agent)

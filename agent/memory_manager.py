@@ -500,6 +500,17 @@ class MemoryManager:
             )
         return result
 
+    def set_prefetch_spill_cap(self, max_chars: Optional[int]) -> None:
+        """Override the prefetch spill cap (chars). ``None``/``<=0`` leaves it unchanged.
+
+        Used with ``memory.ephemeral_recall``: prefetch no longer accumulates in history, so the
+        hook-output default (10K chars, 500-char head/tail preview) would only truncate recall."""
+        if not max_chars or int(max_chars) <= 0:
+            return
+        cfg = dict(self._external_prefetch_spill_config or get_spill_config())
+        cfg["max_chars"] = int(max_chars)
+        self._external_prefetch_spill_config = cfg
+
     def describe_recall(self) -> str:
         """Deterministic recall indicator line (e.g. ``"🧠 Provider — recalled 3 memories"``); ``""`` if none.
         Call right after :meth:`prefetch_all` so the user SEES memory was used even if the model is silent."""

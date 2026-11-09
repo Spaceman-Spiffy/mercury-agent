@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from types import SimpleNamespace
 
 import httpx
@@ -108,7 +108,7 @@ def test_codex_usage_falls_back_to_native_credential_pool(monkeypatch, codex_usa
     )
     pool = SimpleNamespace(select=lambda: pool_entry)
 
-    import agent.credential_pool as credential_pool
+    from agent import credential_pool
 
     monkeypatch.setattr(credential_pool, "load_pool", lambda provider: pool)
 
@@ -205,7 +205,7 @@ def test_codex_usage_account_id_read_failure_keeps_singleton_token(monkeypatch, 
         ),
     )
 
-    import agent.credential_pool as credential_pool
+    from agent import credential_pool
 
     monkeypatch.setattr(
         credential_pool,
@@ -488,7 +488,7 @@ def test_fetch_account_usage_codex(monkeypatch):
     assert len(snapshot.windows) == 2
     assert snapshot.windows[0].label == "Session"
     assert snapshot.windows[0].used_percent == 15.0
-    assert snapshot.windows[0].reset_at == datetime.fromtimestamp(1_900_000_000, tz=timezone.utc)
+    assert snapshot.windows[0].reset_at == datetime.fromtimestamp(1_900_000_000, tz=UTC)
     assert "Credits balance: $12.50" in snapshot.details
 
 
@@ -496,13 +496,13 @@ def test_render_account_usage_lines_includes_reset_and_provider():
     snapshot = account_usage.AccountUsageSnapshot(
         provider="openai-codex",
         source="usage_api",
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=datetime.now(UTC),
         plan="Pro",
         windows=(
             account_usage.AccountUsageWindow(
                 label="Session",
                 used_percent=25,
-                reset_at=datetime.now(timezone.utc),
+                reset_at=datetime.now(UTC),
             ),
         ),
         details=("Credits balance: $9.99",),
@@ -635,11 +635,11 @@ def test_fetch_anthropic_utilization_is_percent_not_fraction(monkeypatch):
     assert snapshot is not None
     by_label = {w.label: w.used_percent for w in snapshot.windows}
     # The decisive assertion: 1.0 → 1%, NOT 100%.
-    assert by_label["Current week (Sonnet only)"] == 1.0
+    assert by_label["Sonnet week"] == 1.0
     assert by_label["Current session"] == 7.0
-    assert by_label["Current week (all models)"] == 5.0
+    assert by_label["Current week"] == 5.0
     # Opus window is null in the payload and must be omitted, not zero-filled.
-    assert "Current week (Opus only)" not in by_label
+    assert "Opus week" not in by_label
 
 
 def test_render_account_usage_block_matches_claude_code_shape(monkeypatch):
@@ -647,18 +647,18 @@ def test_render_account_usage_block_matches_claude_code_shape(monkeypatch):
     snapshot = account_usage.AccountUsageSnapshot(
         provider="anthropic",
         source="oauth_usage_api",
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=datetime.now(UTC),
         windows=(
             account_usage.AccountUsageWindow(
-                label="Current week (Sonnet only)",
+                label="Sonnet week",
                 used_percent=1.0,
-                reset_at=datetime.now(timezone.utc),
+                reset_at=datetime.now(UTC),
             ),
         ),
     )
     block = account_usage.render_account_usage_block(snapshot)
 
-    assert block[0] == "Current week (Sonnet only)"
+    assert block[0] == "Sonnet week"
     # The gauge line carries the percentage and a bar made of block glyphs.
     assert "1% used" in block[1]
     assert ("█" in block[1]) or ("░" in block[1])
@@ -671,7 +671,7 @@ def test_render_account_usage_block_empty_when_unavailable():
     empty = account_usage.AccountUsageSnapshot(
         provider="anthropic",
         source="oauth_usage_api",
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=datetime.now(UTC),
     )
     assert account_usage.render_account_usage_block(empty) == []
     assert account_usage.render_account_usage_block(None) == []

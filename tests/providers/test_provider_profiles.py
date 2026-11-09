@@ -202,7 +202,7 @@ class TestKimiCodingProfile:
 
     def test_k26_no_config_still_keeps(self):
         p = get_provider_profile("kimi-coding")
-        eb, tl = p.build_api_kwargs_extras(reasoning_config=None, model="kimi-k2.6")
+        eb, _ = p.build_api_kwargs_extras(reasoning_config=None, model="kimi-k2.6")
         assert eb["thinking"] == {"type": "enabled", "keep": "all"}
 
     def test_thinking_disabled_no_keep(self):
@@ -213,15 +213,13 @@ class TestKimiCodingProfile:
         assert eb["thinking"] == {"type": "disabled"}
         assert "keep" not in eb["thinking"]
 
-    def test_non_thinking_kimi_no_keep(self):
-        """Non-thinking Kimi models (turbo, k2.5) must NOT get keep."""
+    def test_k3_no_thinking_keep(self):
+        """K3 keeps replayed reasoning server-side, so no ``thinking.keep`` is sent
+        (upstream rule: the K2 family is the only one that needs ``keep: "all"``)."""
         p = get_provider_profile("kimi-coding")
-        for model in ("kimi-k2-turbo-preview", "kimi-k2.5"):
-            eb, _ = p.build_api_kwargs_extras(
-                reasoning_config={"enabled": True}, model=model
-            )
-            assert eb["thinking"] == {"type": "enabled"}
-            assert "keep" not in eb["thinking"]
+        eb, _ = p.build_api_kwargs_extras(reasoning_config={"enabled": True}, model="kimi-k3")
+        assert eb["thinking"] == {"type": "enabled"}
+        assert "keep" not in eb["thinking"]
 
 
 class TestBaseProfile:

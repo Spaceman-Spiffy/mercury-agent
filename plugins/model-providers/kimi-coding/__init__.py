@@ -4,19 +4,15 @@ redirected to api.kimi.com/coding by core)."""
 from typing import Any
 from urllib.parse import urlparse
 
-from agent.reasoning_effort import (
-    KIMI_K3_EFFORTS,
-    KIMI_K3_OVERRIDES,
-    clamp_effort,
-)
-from hermes_cli.version_info import get_version_info
+from agent.reasoning_effort import KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES, thinking_toggle_extras
+from hermes_cli.version_info import hermes_user_agent
 from providers import register_provider
-from providers.base import OMIT_TEMPERATURE, ProviderProfile
+from providers.base import OMIT_TEMPERATURE, LazyHeaders, ProviderProfile
 
 _HEADERS = {
     "HTTP-Referer": "https://hermes-agent.nousresearch.com",
     "X-Title": "Hermes Agent",
-    "User-Agent": f"HermesAgent/{get_version_info().base_version}",
+    "User-Agent": lambda: hermes_user_agent("HermesAgent"),
     # Exclude brotli: httpx's brotlicffi backend has a streaming decode bug on
     # Moonshot's content-encoding: br SSE responses (#28043, #48428, #59556).
     # gzip sidesteps it while still compressing the transfer.
@@ -50,14 +46,6 @@ class KimiProfile(ProviderProfile):
     ingests historical reasoning, keep omitted strips it).
     """
 
-    @staticmethod
-    def _supports_preserved_thinking(model: str | None) -> bool:
-        """True for Kimi models that accept thinking.keep (k2.6 / k2-thinking)."""
-        if not model:
-            return False
-        m = model.lower()
-        return "k2.6" in m or "k2-thinking" in m or "thinking" in m
-
     def fetch_models(
         self, *, api_key: str | None = None, base_url: str | None = None, timeout: float = 8.0
     ) -> list[str] | None:
@@ -73,67 +61,16 @@ class KimiProfile(ProviderProfile):
         return [model for model in models if model.strip().lower() != "k3"]
 
     def build_api_kwargs_extras(
-        self,
-        *,
-        reasoning_config: dict | None = None,
-        model: str | None = None,
-        **context,
+        self, *, reasoning_config: dict | None = None, model: str | None = None, **context
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Kimi reasoning controls.
-
-        Moonshot's wire shape treats ``extra_body.thinking`` (a binary toggle)
-        and a top-level ``reasoning_effort`` as mutually exclusive — sending
-        both is at best redundant and risks "cannot specify both 'thinking' and
-        'reasoning_effort'" (HTTP 400). This mirrors the kimi-k2 handling on the
-        opencode-go relay: send effort when one is requested, otherwise fall
-        back to ``extra_body.thinking`` — never both.
-
-        MERCURY FORK: layers Preserved Thinking (``keep="all"``) on top of
-        upstream's shared ``thinking_toggle_extras`` shape rather than calling
-        it directly, because ``keep`` must be set INSIDE the toggle dict on
-        only the thinking-capable branch — ``thinking_toggle_extras`` has no
-        parameter for that addition.
-        """
-        extra_body = {}
-        top_level = {}
-        keep_thinking = self._supports_preserved_thinking(model)
-
-        if not reasoning_config or not isinstance(reasoning_config, dict):
-            # No config → thinking enabled, let the server pick the depth.
-            # (Previously also sent reasoning_effort="medium", which paired
-            # thinking + effort on every default call.)
-            extra_body["thinking"] = {"type": "enabled"}
-            if keep_thinking:
-                extra_body["thinking"]["keep"] = "all"
-            return extra_body, top_level
-
-        enabled = reasoning_config.get("enabled", True)
-        if enabled is False:
-            extra_body["thinking"] = {"type": "disabled"}
-            return extra_body, top_level
-
-        # Enabled: prefer an explicit effort; only fall back to extra_body
-        # thinking when no recognized effort is requested. thinking and
-        # reasoning_effort are mutually exclusive (Moonshot HTTP 400
-        # otherwise), so set exactly one branch — and apply Preserved
-        # Thinking (keep="all") only on the branch where thinking
-        # actually survives (MERCURY FORK).
-        # K3's vocabulary (low/high/max, default high) and its documented
-        # rounding (medium→high, xhigh→max) are declared in
-        # agent.reasoning_effort — shared with the chat-completions
-        # transport's Kimi path so both stay in sync.
-        effort = (reasoning_config.get("effort") or "").strip().lower()
-        if effort and effort != "none":
-            k3_effort = clamp_effort(effort, KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES)
-        else:
-            k3_effort = None
-        if k3_effort in KIMI_K3_EFFORTS:
-            top_level["reasoning_effort"] = k3_effort
-        else:
-            extra_body["thinking"] = {"type": "enabled"}
-            if keep_thinking:
-                extra_body["thinking"]["keep"] = "all"
-
+        """Moonshot treats extra_body.thinking and reasoning_effort as mutually
+        exclusive (400 on both): send effort when requested, else the toggle. K2.x keeps
+        replayed prior-turn reasoning_content only with ``thinking.keep: "all"`` (default null
+        ignores it; platform.kimi.ai/docs/guide/use-thinking-models); K3 always keeps it."""
+        extra_body, top_level = thinking_toggle_extras(reasoning_config, KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES)
+        thinking = extra_body.get("thinking")
+        if isinstance(thinking, dict) and thinking.get("type") == "enabled" and "k2" in (model or "").lower():
+            extra_body["thinking"] = {**thinking, "keep": "all"}
         return extra_body, top_level
 
 
@@ -141,7 +78,7 @@ def _kimi(name: str, aliases: tuple, env_vars: tuple, base_url: str) -> KimiProf
     return KimiProfile(
         name=name, aliases=aliases, env_vars=env_vars, base_url=base_url,
         fixed_temperature=OMIT_TEMPERATURE, default_max_tokens=32000,
-        default_headers=dict(_HEADERS), default_aux_model="kimi-k2-turbo-preview",
+        default_headers=LazyHeaders(_HEADERS), default_aux_model="kimi-k2-turbo-preview",
     )
 
 

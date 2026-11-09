@@ -78,7 +78,7 @@ def _stub_mautrix():
 
 _stub_mautrix()
 
-from plugins.platforms.matrix.adapter import MatrixAdapter, _MatrixApprovalPrompt  # noqa: E402
+from plugins.platforms.matrix.adapter import MatrixAdapter, _MatrixApprovalPrompt
 
 
 # ---------------------------------------------------------------------------

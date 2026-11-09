@@ -27,7 +27,7 @@ _SYSTEM_PYTHON = "/usr/bin/python3"  # has gi/dbus; the agent venv does not
 def _query_cursor():
     """(x, y) from the compositor via the helper. Raises on failure.
     Monkeypatched in unit tests; exercised live in the acceptance run."""
-    r = subprocess.run([_SYSTEM_PYTHON, _HELPER],
+    r = subprocess.run([_SYSTEM_PYTHON, _HELPER], stdin=subprocess.DEVNULL, check=False,
                        capture_output=True, text=True, timeout=15)
     line = (r.stdout.strip().splitlines() or [""])[-1]
     try:

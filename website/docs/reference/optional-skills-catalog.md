@@ -27,6 +27,15 @@ To uninstall:
 hermes skills uninstall <skill-name>
 ```
 
+## apple
+
+| Skill | Description |
+|-------|-------------|
+| [**apple-notes**](../user-guide/skills/optional/apple/apple-apple-notes.md) | Manage Apple Notes via memo CLI: create, search, edit. |
+| [**apple-reminders**](../user-guide/skills/optional/apple/apple-apple-reminders.md) | Apple Reminders via remindctl: add, list, complete. |
+| [**findmy**](../user-guide/skills/optional/apple/apple-findmy.md) | Track Apple devices/AirTags via FindMy.app on macOS. |
+| [**imessage**](../user-guide/skills/optional/apple/apple-imessage.md) | Send and receive iMessages/SMS via the imsg CLI on macOS. |
+
 ## autonomous-ai-agents
 
 | Skill | Description |
@@ -252,6 +261,7 @@ hermes skills uninstall <skill-name>
 | Skill | Description |
 |-------|-------------|
 | [**reddit-reading**](../user-guide/skills/optional/social-media/social-media-reddit-reading.md) | Read Reddit: subreddits, search, threads, users. No browser. |
+| [**xurl**](../user-guide/skills/optional/social-media/social-media-xurl.md) | X/Twitter via xurl CLI: raw post search, posting, DM, media. |
 
 ## software-development
 

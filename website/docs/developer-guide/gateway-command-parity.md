@@ -32,7 +32,7 @@ handler does; `client-local (cli_only)` commands are terminal/UI features of a c
 |---|---|---|---|---|---|---|
 | `/agents` (/tasks) | refused | HermesCLI._handle_agents_command | delegation.pause | action: agents | slash.exec: refused | gateway-wide: lists every chat's running agents and the process's async jobs |
 | `/approvals` | control | HermesCLI._handle_approvals_command | slash.exec | slash.exec | slash.exec | per-session setting (gateway handler) |
-| `/approve` | control | messaging-only: unknown command | slash.exec | slash.exec | slash.exec | messaging-only |
+| `/approve` (/go) | control | messaging-only: unknown command | slash.exec | unavailable: messaging | slash.exec | messaging-only |
 | `/autoprune` | control | HermesCLI._handle_autoprune_command | slash.exec | slash.exec | slash.exec |  |
 | `/battery` | refused | HermesCLI._handle_battery_command | sidecar: system.battery (preference not saved) | slash.exec: refused | slash.exec: refused | client-local (cli_only) |
 | `/bg` | refused | HermesCLI._handle_background_command | prompt.background | action: background | slash.exec: refused |  |
@@ -52,7 +52,7 @@ handler does; `client-local (cli_only)` commands are terminal/UI features of a c
 | `/cron` | read (bare / `list`; add/edit/pause/resume/run/remove control, from the classic CLI's own command socket only) | HermesCLI._handle_cron_command | slash.exec | unavailable: terminal | slash.exec | client-local (cli_only) |
 | `/curator` | control | HermesCLI._handle_curator_command | slash.exec | unavailable: advanced | slash.exec |  |
 | `/debug` | control | HermesCLI._handle_debug_command | slash.exec | slash.exec | slash.exec | uploads logs to a public paste |
-| `/deny` | control | messaging-only: unknown command | slash.exec | slash.exec | slash.exec | messaging-only |
+| `/deny` (/nogo) | control | messaging-only: unknown command | slash.exec | unavailable: messaging | slash.exec | messaging-only |
 | `/diff` | read | HermesCLI._handle_diff_command | slash.exec | slash.exec | slash.exec |  |
 | `/discard` | refused | HermesCLI._handle_discard_command | slash.exec: refused | slash.exec: refused | prompt.resolve_unknown |  |
 | `/egress` | control | HermesCLI._cmd_egress | slash.exec | slash.exec | slash.exec |  |

@@ -177,6 +177,7 @@ def _render_usage_window_lines(snapshot: AccountUsageSnapshot) -> list[str]:
     lines.extend(snapshot.details)
     if snapshot.unavailable_reason:
         lines.append(f"Unavailable: {snapshot.unavailable_reason}")
+    return lines
 
 
 def _local_iana_zone() -> Optional[str]:

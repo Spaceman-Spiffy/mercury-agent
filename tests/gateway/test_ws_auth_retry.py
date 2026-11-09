@@ -131,136 +131,109 @@ class TestMattermostWSAuthRetry:
 # ---------------------------------------------------------------------------
 
 
+class _MatrixRequestError(Exception):
+    """Shape of mautrix's MatrixRequestError as the adapter classifies it: ``errcode`` and
+    ``http_status`` only (``_is_permanent_matrix_auth_error`` deliberately ignores message text)."""
+
+    def __init__(self, message, *, errcode=None, http_status=None):
+        super().__init__(message)
+        self.errcode = errcode
+        self.http_status = http_status
+
+
 class TestMatrixSyncAuthRetry:
-    """gateway/platforms/matrix.py — _sync_loop()"""
+    """plugins/platforms/matrix/adapter.py — _sync_loop() (MERCURY FORK coverage; the adapter runs
+    on mautrix, which raises on every non-2xx, so a fatal auth error is an exception with a
+    structured errcode/http_status — never a returned error object, never message text)."""
+
+    @staticmethod
+    def _adapter(fake_sync):
+        from gateway.config import Platform
+        from plugins.platforms.matrix.adapter import MatrixAdapter
+
+        adapter = MatrixAdapter.__new__(MatrixAdapter)
+        adapter._closing = False
+        # The base __init__ sets these; the __new__ harness bypass skips it. _set_fatal_error ->
+        # _write_runtime_status_safe reads self.platform.value, _notify_fatal_error reads
+        # self._fatal_error_handler (None short-circuits), and the sync-error log line redacts
+        # through self._proxy_url / self._homeserver.
+        adapter.platform = Platform.MATRIX
+        adapter._fatal_error_handler = None
+        adapter._fatal_error_message = None  # has_fatal_error reads it before any error is set
+        adapter._running = False
+        adapter._proxy_url = None
+        adapter._homeserver = "https://matrix.example.org"
+        adapter._client = MagicMock()
+        adapter._client.sync = fake_sync
+        adapter._client.sync_store = MagicMock()
+        adapter._client.sync_store.get_next_batch = AsyncMock(return_value=None)
+        adapter._pending_megolm = []
+        adapter._joined_rooms = set()
+        return adapter
 
     def test_unknown_token_sync_error_stops_loop(self):
-        """A SyncError with M_UNKNOWN_TOKEN should stop syncing."""
-        import types
-        from gateway.config import Platform
-        nio_mock = types.ModuleType("nio")
-
-        class SyncError:
-            def __init__(self, message):
-                self.message = message
-
-        nio_mock.SyncError = SyncError
-
-        from plugins.platforms.matrix.adapter import MatrixAdapter
-
-        adapter = MatrixAdapter.__new__(MatrixAdapter)
-        adapter._closing = False
-        # The base __init__ sets self.platform; the __new__ harness bypass skips it,
-        # but _set_fatal_error -> _write_runtime_status_safe reads self.platform.value.
-        adapter.platform = Platform.MATRIX
-        # _notify_fatal_error reads self._fatal_error_handler; None means "no handler",
-        # which short-circuits before the handler call.  See base.py:_notify_fatal_error.
-        adapter._fatal_error_handler = None
-
+        """M_UNKNOWN_TOKEN is permanent: one sync, fatal error recorded as non-retryable."""
         sync_count = 0
 
-        async def fake_sync(timeout=30000, since=None):
+        async def fake_sync(since=None, timeout=30000):
             nonlocal sync_count
             sync_count += 1
-            return SyncError("M_UNKNOWN_TOKEN: Invalid access token")
+            raise _MatrixRequestError("Invalid access token", errcode="M_UNKNOWN_TOKEN", http_status=401)
 
-        adapter._client = MagicMock()
-        adapter._client.sync = fake_sync
-        adapter._client.sync_store = MagicMock()
-        adapter._client.sync_store.get_next_batch = AsyncMock(return_value=None)
-        adapter._pending_megolm = []
-        adapter._joined_rooms = set()
-
-        async def run():
-            import sys
-
-            sys.modules["nio"] = nio_mock
-            try:
-                await adapter._sync_loop()
-            finally:
-                del sys.modules["nio"]
-
-        asyncio.run(run())
+        adapter = self._adapter(fake_sync)
+        asyncio.run(asyncio.wait_for(adapter._sync_loop(), timeout=10))
         assert sync_count == 1
+        assert adapter.has_fatal_error
+        assert adapter._fatal_error_code == "matrix_auth_error"
+        assert adapter._fatal_error_retryable is False
 
     def test_exception_with_401_stops_loop(self):
-        """An exception containing '401' should stop syncing."""
-        from gateway.config import Platform
-        from plugins.platforms.matrix.adapter import MatrixAdapter
-        adapter = MatrixAdapter.__new__(MatrixAdapter)
-        adapter._closing = False
-        # See test_unknown_token_sync_error_stops_loop — _set_fatal_error reads
-        # self.platform.value, so the harness must set it explicitly.
-        adapter.platform = Platform.MATRIX
-        adapter._fatal_error_handler = None
-
+        """A structured 401 without an errcode is still permanent."""
         call_count = 0
 
-        async def fake_sync(timeout=30000, since=None):
+        async def fake_sync(since=None, timeout=30000):
             nonlocal call_count
             call_count += 1
-            raise RuntimeError("HTTP 401 Unauthorized")
+            raise _MatrixRequestError("Unauthorized", http_status=401)
 
-        adapter._client = MagicMock()
-        adapter._client.sync = fake_sync
-        adapter._client.sync_store = MagicMock()
-        adapter._client.sync_store.get_next_batch = AsyncMock(return_value=None)
-        adapter._pending_megolm = []
-        adapter._joined_rooms = set()
-
-        async def run():
-            import types
-            nio_mock = types.ModuleType("nio")
-            nio_mock.SyncError = type("SyncError", (), {})
-
-            import sys
-            sys.modules["nio"] = nio_mock
-            try:
-                await adapter._sync_loop()
-            finally:
-                del sys.modules["nio"]
-
-        asyncio.run(run())
+        adapter = self._adapter(fake_sync)
+        asyncio.run(asyncio.wait_for(adapter._sync_loop(), timeout=10))
         assert call_count == 1
+        assert adapter.has_fatal_error
 
-    def test_transient_error_retries(self):
-        """A transient error should retry (not stop immediately)."""
-        from plugins.platforms.matrix.adapter import MatrixAdapter
-        adapter = MatrixAdapter.__new__(MatrixAdapter)
-        adapter._closing = False
-        from gateway.config import Platform
-        adapter.platform = Platform.MATRIX
-        adapter._fatal_error_handler = None
-
+    def test_message_text_alone_never_stops_loop(self):
+        """``401`` in a message with no structured signal is a transient (HTML 5xx page, echoed
+        since-token): the loop retries instead of dying on a passing blip."""
         call_count = 0
 
-        async def fake_sync(timeout=30000, since=None):
+        async def fake_sync(since=None, timeout=30000):
             nonlocal call_count
             call_count += 1
             if call_count >= 2:
                 adapter._closing = True
-                return MagicMock()  # Normal response
+                return {}
+            raise RuntimeError("HTTP 401 Unauthorized (coordinate 1403.2)")
+
+        adapter = self._adapter(fake_sync)
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            asyncio.run(asyncio.wait_for(adapter._sync_loop(), timeout=10))
+        assert call_count == 2
+        assert not adapter.has_fatal_error
+
+    def test_transient_error_retries(self):
+        """A dropped connection retries (not stop immediately)."""
+        call_count = 0
+
+        async def fake_sync(since=None, timeout=30000):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                adapter._closing = True
+                return {}
             raise ConnectionError("network timeout")
 
-        adapter._client = MagicMock()
-        adapter._client.sync = fake_sync
-        adapter._client.sync_store = MagicMock()
-        adapter._client.sync_store.get_next_batch = AsyncMock(return_value=None)
-        adapter._pending_megolm = []
-        adapter._joined_rooms = set()
-
-        async def run():
-            import types
-            nio_mock = types.ModuleType("nio")
-            nio_mock.SyncError = type("SyncError", (), {})
-
-            import sys
-            sys.modules["nio"] = nio_mock
-            try:
-                with patch("asyncio.sleep", new_callable=AsyncMock):
-                    await adapter._sync_loop()
-            finally:
-                del sys.modules["nio"]
-
-        asyncio.run(run())
-        assert call_count >= 2
+        adapter = self._adapter(fake_sync)
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            asyncio.run(asyncio.wait_for(adapter._sync_loop(), timeout=10))
+        assert call_count == 2
+        assert not adapter.has_fatal_error

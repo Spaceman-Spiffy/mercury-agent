@@ -39,8 +39,8 @@ def main():
             result["pos"] = (int(x), int(y))
             loop.quit()
 
-    name = dbus.service.BusName(SERVICE, bus)
-    sink = CursorSink(bus, OBJ_PATH)
+    # Held for the lifetime of the loop: dropping either reference unregisters it from the bus.
+    _keepalive = (dbus.service.BusName(SERVICE, bus), CursorSink(bus, OBJ_PATH))
 
     script = (
         f'callDBus("{SERVICE}", "{OBJ_PATH}", "{IFACE}", "report", '

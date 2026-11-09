@@ -254,6 +254,11 @@ SCHEMA_HISTORY: dict[str, _TableHistory] = {
             ('+', 'tool_call_uids', 'absorbed_message_uids'),
             ('+', 'tool_call_uid', 'tool_call_uids'),
         )),
+        # MERCURY FORK: the ordered Anthropic block sidecar (0fab928d9c, 2026-05-30) never left this
+        # lineage; upstream added and dropped it the same day (08/09). Re-declared here so the replay
+        # ends at the fork's SCHEMA_SQL. Physically, live fork stores carry it right after ``observed``
+        # (appended before ``active``), a layout snapshot 08 already makes reachable.
+        ('17 2026-11-09T00:00Z f95cb00c97', (('+', 'anthropic_content_blocks', 'reasoning_details'),)),
         ),
     ),
     "session_model_usage": _TableHistory(

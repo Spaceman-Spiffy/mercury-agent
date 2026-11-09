@@ -2,6 +2,7 @@ from argparse import Namespace
 import os
 from pathlib import Path
 import sys
+import types
 
 import pytest
 from hermes_cli import main_tui_launch
@@ -107,7 +108,7 @@ def test_main_top_level_tui_accepts_toolsets(monkeypatch, main_mod):
         "tools.mcp_tool_discovery",
         types.SimpleNamespace(discover_mcp_tools=lambda: None),
     )
-    monkeypatch.setattr(config_mod, "load_config", lambda: {})
+    monkeypatch.setattr(config_mod, "load_config", dict)
     monkeypatch.setattr(config_mod, "get_container_exec_info", lambda: None)
     monkeypatch.setitem(
         sys.modules,
@@ -243,20 +244,21 @@ def test_termux_fast_cli_launch_oneshot_uses_light_parser(monkeypatch, main_mod)
     monkeypatch.setattr(
         main_mod, "_prepare_agent_startup", lambda args: prepared.append(args.command)
     )
+    # _run_oneshot_from_args hands the parsed args to the gateway-chat launcher and
+    # exits with its return code; stub that seam so no gateway runtime is spawned.
     monkeypatch.setitem(
         sys.modules,
-        "hermes_cli.oneshot",
+        "hermes_cli.gateway_chat_startup",
         types.SimpleNamespace(
-            run_oneshot=lambda prompt, **kwargs: captured.update(
-                {"prompt": prompt, **kwargs}
+            launch_gateway_chat=lambda args: captured.update(
+                {
+                    key: getattr(args, key, None)
+                    for key in ("oneshot", "model", "provider", "toolsets",
+                                "usage_file", "skills", "resume", "reasoning")
+                }
             )
             or 17
         ),
-    )
-    monkeypatch.setattr(
-        main_mod,
-        "_exit_after_oneshot",
-        _raise_exit,
     )
 
     with pytest.raises(SystemExit) as exc:
@@ -265,7 +267,7 @@ def test_termux_fast_cli_launch_oneshot_uses_light_parser(monkeypatch, main_mod)
     assert exc.value.code == 17
     assert prepared == [None]
     assert captured == {
-        "prompt": "hello",
+        "oneshot": "hello",
         "model": "gpt-test",
         "provider": "openai",
         "toolsets": None,

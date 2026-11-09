@@ -1,11 +1,9 @@
 """
 Baked-in build metadata for Hermes Agent.
 
-MERCURY FORK NOTE: ``get_code_identity()`` below is a thin compat SHIM —
-upstream moved the real implementation (install-stamp-first resolution) to
-``hermes_cli/version_info.py``; this module now only re-exports it so any
-``from hermes_cli.build_info import get_code_identity`` call site that has
-not yet migrated keeps working. The old Docker-build-arg sha mechanism
+MERCURY FORK NOTE: ``get_code_identity()`` below is upstream's old-updater
+shim (always ``unknown``); the real resolver is ``hermes_cli/version_info.py``.
+The old Docker-build-arg sha mechanism
 (``.hermes_build_sha`` / ``get_build_sha()`` / ``_resolve_git_head_sha()``)
 was removed upstream in favor of ``install-stamp.json``-based resolution;
 confirmed zero remaining callers of ``get_build_sha`` anywhere in this tree
@@ -43,13 +41,11 @@ def get_brand_name() -> str:
 
 
 def get_code_identity(refresh: bool = False) -> dict:
-    """Compat shim: re-exports the real implementation in version_info.py.
+    """Upstream's shim: suppress old-updater work until relaunch, not certify the new checkout.
 
-    Upstream moved resolution (install-stamp first, live-git second, unknown
-    third) to ``hermes_cli/version_info.get_code_identity()``. This module
-    keeps re-exporting the name so call sites that still import it from
-    ``build_info`` (fork and upstream alike) do not break.
+    The live resolver (install-stamp first, live git second) is ``hermes_cli.version_info
+    .get_code_identity``; an old parent process importing this name after an update must get
+    ``unknown`` so it schedules nothing against the fresh checkout
+    (tests/hermes_cli/test_old_updater_additional_shims.py).
     """
-    from hermes_cli.version_info import get_code_identity as _real_get_code_identity
-
-    return _real_get_code_identity(refresh=refresh)
+    return {"sha": None, "short_sha": None, "version": None, "source": "unknown"}

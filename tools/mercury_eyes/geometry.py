@@ -54,7 +54,7 @@ def _portal_size():
     helper = os.path.join(os.path.dirname(__file__), "portal_helper.py")
     out = os.path.join(tempfile.gettempdir(), f"mercury_geom_{os.getpid()}.png")
     try:
-        r = subprocess.run(["/usr/bin/python3", helper, out],
+        r = subprocess.run(["/usr/bin/python3", helper, out], stdin=subprocess.DEVNULL, check=False,
                            capture_output=True, text=True, timeout=45)
         line = (r.stdout.strip().splitlines() or [""])[-1]
         payload = json.loads(line)
@@ -95,7 +95,7 @@ def _kscreen_mode():
     TRAP: the JSON has NO `geometry` key; `size` and the current mode's
     `size` are PHYSICAL. Logical must be computed as size / scale.
     """
-    r = subprocess.run(["kscreen-doctor", "-j"],
+    r = subprocess.run(["kscreen-doctor", "-j"], stdin=subprocess.DEVNULL, check=False,
                        capture_output=True, text=True, timeout=15)
     outs = [o for o in json.loads(r.stdout).get("outputs", []) if o.get("enabled")]
     if not outs:
@@ -133,7 +133,7 @@ def _atspi_toplevels():
     import subprocess
 
     helper = os.path.join(os.path.dirname(__file__), "surfaces_helper.py")
-    r = subprocess.run(["/usr/bin/python3", helper],
+    r = subprocess.run(["/usr/bin/python3", helper], stdin=subprocess.DEVNULL, check=False,
                        capture_output=True, text=True, timeout=30)
     line = (r.stdout.strip().splitlines() or [""])[-1]
     payload = json.loads(line)
@@ -246,7 +246,7 @@ def _x11_root():
     """LOGICAL == PHYSICAL on X11 (scale 1)."""
     if not os.environ.get("DISPLAY"):
         return None
-    r = subprocess.run(["xdpyinfo"], capture_output=True, text=True, timeout=10)
+    r = subprocess.run(["xdpyinfo"], stdin=subprocess.DEVNULL, check=False, capture_output=True, text=True, timeout=10)
     m = re.search(r"dimensions:\s+(\d+)x(\d+)", r.stdout)
     if m:
         return (int(m.group(1)), int(m.group(2)))

@@ -14,8 +14,8 @@ Apple Reminders via remindctl: add, list, complete.
 
 | | |
 |---|---|
-| Source | Bundled (installed by default) |
-| Path | `skills/apple/apple-reminders` |
+| Source | Optional — install with `hermes skills install official/apple/apple-reminders` |
+| Path | `optional-skills/apple/apple-reminders` |
 | Version | `1.0.0` |
 | Author | Hermes Agent |
 | License | MIT |

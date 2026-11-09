@@ -24,7 +24,6 @@ Every verb returns an OBSERVATION, never a bare success flag.
 """
 import json
 import os
-import shutil
 
 from tools.approval import request_tool_approval
 from tools.mercury_eyes import (act, capture, events, geometry, pointer,
@@ -105,7 +104,8 @@ def _check() -> bool:
             return False
         if not os.access("/dev/uinput", os.W_OK):
             return False
-        return shutil.which("qdbus6") is not None
+        from hermes_platform.resolver import locate_command
+        return bool(locate_command("qdbus6").command)
     except Exception:
         return False
 

@@ -801,6 +801,9 @@ def adopt_worker_execution(db, *, epoch: int, execution_id: str, session_id: str
 _MESSAGE_FIELDS = frozenset({
     'role', 'content', 'tool_name', 'tool_calls', 'tool_call_id', 'token_count',
     'finish_reason', 'reasoning', 'reasoning_content', 'reasoning_details',
+    # Fork column (0fab928d9c): the ordered Anthropic block sidecar persists so interleaved
+    # thinking/tool_use order survives a restart; the worker's row dict carries it on every role.
+    'anthropic_content_blocks',
     'codex_reasoning_items', 'codex_message_items', 'platform_message_id', 'message_id',
     'observed', 'effect_disposition', '_compressed_summary', 'timestamp', 'api_content',
     'display_kind', 'display_metadata', '_row_id', '_canonical_content', DB_ROW_SNAPSHOT, CANONICAL_ROW, DATA_USE,

@@ -44,7 +44,7 @@ def _event_wait(app, name, role, timeout):
     try:
         r = subprocess.run(
             [_SYSTEM_PYTHON, _HELPER, app or "", name or "", role or "",
-             str(timeout)], capture_output=True, text=True,
+             str(timeout)], stdin=subprocess.DEVNULL, check=False, capture_output=True, text=True,
             timeout=timeout + 10)
     except (subprocess.TimeoutExpired, OSError):
         return None
@@ -86,7 +86,7 @@ def wait_until(app=None, name=None, role=None, timeout=30.0,
     element = None
     while time.monotonic() - t0 < timeout:
         now = time.monotonic()
-        if "event" in holder and holder["event"]:
+        if holder.get("event"):
             ms = (now - t0) * 1000
             return {"matched": True, "method": "event", "ms": ms,
                     "element": holder["event"], "probed_at": time.time()}

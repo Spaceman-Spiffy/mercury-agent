@@ -27,9 +27,11 @@ def test_version_slash_command_displays_derived_version(monkeypatch):
         lambda: SimpleNamespace(base_version="1.2.3", derived_version="1.2.3+4.gabcdef0"),
     )
 
+    from hermes_cli.build_info import get_brand_name  # MERCURY FORK: brand-aware identity line
+
     agent = object.__new__(HermesACPAgent)
     state = cast(SessionState, SimpleNamespace(cwd="."))
-    assert agent._handle_slash_command("/version", state) == "Hermes Agent v1.2.3+4.gabcdef0"
+    assert agent._handle_slash_command("/version", state) == f"{get_brand_name()} v1.2.3+4.gabcdef0"
 
 
 @pytest.mark.asyncio

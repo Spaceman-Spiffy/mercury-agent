@@ -167,18 +167,6 @@ const sidebars: SidebarsConfig = {
               items: [
                 {
                   type: 'category',
-                  label: 'apple',
-                  key: 'skills-bundled-apple',
-                  collapsed: true,
-                  items: [
-                    'user-guide/skills/bundled/apple/apple-apple-notes',
-                    'user-guide/skills/bundled/apple/apple-apple-reminders',
-                    'user-guide/skills/bundled/apple/apple-findmy',
-                    'user-guide/skills/bundled/apple/apple-imessage',
-                  ],
-                },
-                {
-                  type: 'category',
                   label: 'autonomous-ai-agents',
                   key: 'skills-bundled-autonomous-ai-agents',
                   collapsed: true,
@@ -273,15 +261,6 @@ const sidebars: SidebarsConfig = {
                 },
                 {
                   type: 'category',
-                  label: 'social-media',
-                  key: 'skills-bundled-social-media',
-                  collapsed: true,
-                  items: [
-                    'user-guide/skills/bundled/social-media/social-media-xurl',
-                  ],
-                },
-                {
-                  type: 'category',
                   label: 'software-development',
                   key: 'skills-bundled-software-development',
                   collapsed: true,
@@ -312,6 +291,18 @@ const sidebars: SidebarsConfig = {
               label: 'Optional',
               collapsed: true,
               items: [
+                {
+                  type: 'category',
+                  label: 'apple',
+                  key: 'skills-optional-apple',
+                  collapsed: true,
+                  items: [
+                    'user-guide/skills/optional/apple/apple-apple-notes',
+                    'user-guide/skills/optional/apple/apple-apple-reminders',
+                    'user-guide/skills/optional/apple/apple-findmy',
+                    'user-guide/skills/optional/apple/apple-imessage',
+                  ],
+                },
                 {
                   type: 'category',
                   label: 'autonomous-ai-agents',
@@ -596,6 +587,7 @@ const sidebars: SidebarsConfig = {
                   collapsed: true,
                   items: [
                     'user-guide/skills/optional/social-media/social-media-reddit-reading',
+                    'user-guide/skills/optional/social-media/social-media-xurl',
                   ],
                 },
                 {

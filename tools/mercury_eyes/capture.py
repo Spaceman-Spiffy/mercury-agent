@@ -60,7 +60,7 @@ def dpms_state():
     """
     obs = {"asleep": None, "outputs": {}, "reason": None}
     try:
-        r = subprocess.run([_KSCREEN_DOCTOR, "--dpms", "show"],
+        r = subprocess.run([_KSCREEN_DOCTOR, "--dpms", "show"], stdin=subprocess.DEVNULL, check=False,
                            capture_output=True, text=True, timeout=15)
     except Exception as exc:
         obs["reason"] = f"dpms unreadable: {type(exc).__name__}: {exc}"
@@ -97,7 +97,7 @@ def wake():
     """
     obs = {"ok": False, "verified": False, "reason": None, "state": None}
     try:
-        subprocess.run([_KSCREEN_DOCTOR, "--dpms", "on"],
+        subprocess.run([_KSCREEN_DOCTOR, "--dpms", "on"], stdin=subprocess.DEVNULL, check=False,
                        capture_output=True, text=True, timeout=15)
     except Exception as exc:
         obs["reason"] = f"wake command failed: {type(exc).__name__}: {exc}"
@@ -164,7 +164,7 @@ def _portal_grab(out):
     Returns {"path": ..., "screensaver_active": bool|None}. Raises on failure.
     Monkeypatched in unit tests; exercised for real in the acceptance run.
     """
-    r = subprocess.run([_SYSTEM_PYTHON, _HELPER, out],
+    r = subprocess.run([_SYSTEM_PYTHON, _HELPER, out], stdin=subprocess.DEVNULL, check=False,
                        capture_output=True, text=True, timeout=45)
     line = (r.stdout.strip().splitlines() or [""])[-1]
     try:

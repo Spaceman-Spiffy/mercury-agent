@@ -21,7 +21,7 @@ Plan multi-platform social campaigns: briefs to posting.
 | License | MIT |
 | Platforms | linux, macos, windows |
 | Tags | `Social-Media`, `Content-Calendar`, `Campaigns`, `Publishing` |
-| Related skills | [`xurl`](../../bundled/social-media/social-media-xurl.md), [`humanizer`](../../bundled/creative/creative-humanizer.md) |
+| Related skills | [`xurl`](../../optional/social-media/social-media-xurl.md), [`humanizer`](../../bundled/creative/creative-humanizer.md) |
 
 ## Reference: full SKILL.md
 

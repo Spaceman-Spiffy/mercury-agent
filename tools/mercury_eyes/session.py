@@ -40,7 +40,7 @@ class UnlockFailed(RuntimeError):
 
 
 def _qdbus(*args):
-    r = subprocess.run(["qdbus6", BUS_NAME, BUS_PATH, *args],
+    r = subprocess.run(["qdbus6", BUS_NAME, BUS_PATH, *args], stdin=subprocess.DEVNULL, check=False,
                        capture_output=True, text=True, timeout=10)
     if r.returncode != 0:
         raise RuntimeError(f"qdbus6 {' '.join(args)} failed: "
@@ -69,7 +69,7 @@ def _loginctl(verb):
     Never fatal on its own, but never harmless either.
     """
     try:
-        subprocess.run(["loginctl", verb], capture_output=True, timeout=10)
+        subprocess.run(["loginctl", verb], stdin=subprocess.DEVNULL, check=False, capture_output=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         pass
 

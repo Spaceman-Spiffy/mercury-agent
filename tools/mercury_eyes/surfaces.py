@@ -36,7 +36,7 @@ def _enumerate_frames():
     empty AND error is set, so a broken bus never looks like an empty desktop.
     """
     try:
-        r = subprocess.run([_SYSTEM_PYTHON, _HELPER],
+        r = subprocess.run([_SYSTEM_PYTHON, _HELPER], stdin=subprocess.DEVNULL, check=False,
                            capture_output=True, text=True, timeout=30)
     except Exception as exc:
         return [], f"{type(exc).__name__}: {exc}"
@@ -60,7 +60,7 @@ def _kwin_windows():
     LOGICAL coordinates (matches the cursor readback space, measured).
     """
     try:
-        r = subprocess.run([_SYSTEM_PYTHON, _KWIN_HELPER],
+        r = subprocess.run([_SYSTEM_PYTHON, _KWIN_HELPER], stdin=subprocess.DEVNULL, check=False,
                            capture_output=True, text=True, timeout=30)
     except Exception as exc:
         return [], f"{type(exc).__name__}: {exc}"
@@ -104,8 +104,8 @@ def _apply_kwin_geometry(frames, windows):
         if candidates and used[key] < len(candidates):
             w = candidates[used[key]]
             used[key] += 1
-            fr["geom"] = [int(round(w["x"])), int(round(w["y"])),
-                          int(round(w["w"])), int(round(w["h"]))]
+            fr["geom"] = [round(w["x"]), round(w["y"]),
+                          round(w["w"]), round(w["h"])]
             fr["geom_source"] = "kwin"
             fr["minimized"] = bool(w.get("minimized"))
         else:

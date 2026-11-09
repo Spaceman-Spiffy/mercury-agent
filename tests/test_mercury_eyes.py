@@ -1,13 +1,19 @@
 """MercuryEyes tests. Invariants and provenance only — never this monitor's numbers."""
 import contextlib
 import json
+import pathlib
 import sys
 
 import pytest
 
-sys.path.insert(0, "/home/peterb/.hermes/hermes-agent")
+# The checkout under test, never a hardcoded install path: the tests run from clones and
+# worktrees, and the home-IO guard refuses reads into the live ~/.hermes/hermes-agent.
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+EYES_PKG = REPO_ROOT / "tools" / "mercury_eyes"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from tools.mercury_eyes import geometry  # noqa: E402
+from tools.mercury_eyes import geometry
 
 
 def test_geometry_reports_its_source():
@@ -32,8 +38,8 @@ def test_logical_never_exceeds_physical():
 
 
 def test_assumed_fallback_is_square_and_flagged(monkeypatch):
-    monkeypatch.setattr(geometry, "_physical_sources", lambda: [])
-    monkeypatch.setattr(geometry, "_logical_sources", lambda: [])
+    monkeypatch.setattr(geometry, "_physical_sources", list)
+    monkeypatch.setattr(geometry, "_logical_sources", list)
     g = geometry.probe(use_cache=False)
     assert g["scale"] == 1.0
     assert g["logical"] == g["physical"]
@@ -121,7 +127,7 @@ def test_clamp_uses_derived_bounds():
 
 def test_no_hardcoded_resolution_anywhere():
     import pathlib
-    pkg = pathlib.Path("/home/peterb/.hermes/hermes-agent/tools/mercury_eyes")
+    pkg = EYES_PKG
     banned = ("2560", "1440", "2048", "1152", "1.25")
     for f in pkg.glob("*.py"):
         body = "\n".join(
@@ -671,7 +677,7 @@ def test_sigterm_during_guard_still_relocks(tmp_path):
     script = tmp_path / "guarded.py"
     script.write_text(textwrap.dedent(f"""
         import sys, time
-        sys.path.insert(0, "/home/peterb/.hermes/hermes-agent")
+        sys.path.insert(0, {str(REPO_ROOT)!r})
         from tools.mercury_eyes import session
         P = {str(state_file)!r}
         session._screensaver_active = lambda: open(P).read().strip() == "locked"
@@ -799,7 +805,8 @@ def test_check_fn_gates_on_the_real_desktop_requirements(monkeypatch):
     st = _screen_tool()
     monkeypatch.setattr(st.os.path, "exists", lambda p: True)
     monkeypatch.setattr(st.os, "access", lambda p, m: True)
-    monkeypatch.setattr(st.shutil, "which", lambda c: "/usr/bin/qdbus6")
+    import hermes_platform.resolver.core as _resolver
+    monkeypatch.setattr(_resolver, "_which", lambda name, ctx: "/usr/bin/qdbus6")
     monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
     assert st._check() is True
     # a host without the uinput write bit cannot drive input — stay hidden
@@ -816,8 +823,7 @@ def test_registration_is_top_level_and_discoverable():
     # registry.register() calls — a nested one is silently never loaded
     import ast
     import pathlib
-    src = pathlib.Path(
-        "/home/peterb/.hermes/hermes-agent/tools/screen_tool.py").read_text()
+    src = (REPO_ROOT / "tools" / "screen_tool.py").read_text()
     tree = ast.parse(src)
     top_level_register = any(
         isinstance(node, ast.Expr)
@@ -828,7 +834,7 @@ def test_registration_is_top_level_and_discoverable():
     assert top_level_register, "registry.register() must be at module top level"
 
 
-def test_tool_is_registered_with_the_expected_surface():
+def test_tool_is_registered_with_the_expected_surface(monkeypatch):
     """Assert the EMITTED schema, not the registered dict.
 
     The earlier version of this test read ``entry.schema["function"]``, which
@@ -839,11 +845,18 @@ def test_tool_is_registered_with_the_expected_surface():
     gets asserted.
     """
     from tools.registry import registry
-    import tools.screen_tool  # noqa: F401  — import triggers registration
+    import tools.screen_tool as st  # import triggers registration
     entry = registry.get_entry("screen")
     assert entry is not None
     assert entry.toolset == "screen"
 
+    # The surface is the subject here, not the host: satisfy check_fn's desktop gates so the
+    # definition is emitted under a headless runner too (gating itself is covered above).
+    import hermes_platform.resolver.core as _resolver
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.setattr(st.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(st.os, "access", lambda p, m: True)
+    monkeypatch.setattr(_resolver, "_which", lambda name, ctx: "/usr/bin/qdbus6")
     defs = registry.get_definitions({"screen"})
     assert defs, "screen produced no definition (check_fn false on this host?)"
     fn = defs[0]["function"]
@@ -1044,9 +1057,7 @@ def test_wake_can_be_declined(monkeypatch):
 def test_surfaces_does_not_import_gi_in_the_agent_venv():
     import ast
     import pathlib
-    src = pathlib.Path(
-        "/home/peterb/.hermes/hermes-agent/tools/mercury_eyes/surfaces.py"
-    ).read_text()
+    src = (EYES_PKG / "surfaces.py").read_text()
     # parse rather than grep: the docstring legitimately mentions the fix
     tree = ast.parse(src)
     imported = set()
@@ -1108,8 +1119,7 @@ def test_no_module_imports_gi_in_the_agent_venv():
     """
     import ast
     import pathlib
-    pkg = pathlib.Path(
-        "/home/peterb/.hermes/hermes-agent/tools/mercury_eyes")
+    pkg = EYES_PKG
     offenders = []
     for path in sorted(pkg.glob("*.py")):
         if path.name.endswith("_helper.py"):

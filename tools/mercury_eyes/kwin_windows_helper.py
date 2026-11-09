@@ -60,8 +60,8 @@ def main():
             result["windows"] = json.loads(str(payload))
             loop.quit()
 
-    name = dbus.service.BusName(SERVICE, bus)
-    sink = WindowsSink(bus, OBJ_PATH)
+    # Held for the lifetime of the loop: dropping either reference unregisters it from the bus.
+    _keepalive = (dbus.service.BusName(SERVICE, bus), WindowsSink(bus, OBJ_PATH))
 
     script = KWIN_SCRIPT % {"service": SERVICE, "path": OBJ_PATH,
                             "iface": IFACE}

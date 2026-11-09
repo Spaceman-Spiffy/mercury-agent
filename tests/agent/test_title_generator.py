@@ -110,14 +110,12 @@ class TestGenerateTitle:
             assert _title_language() == ""
 
 
-    def test_generate_title_disables_reasoning(self):
-        """The titling pass must explicitly disable thinking (#91927).
+    def test_generate_title_sends_no_reasoning_config(self):
+        """MERCURY FORK: the titling pass sends NO reasoning_config (route default applies).
 
-        With the aux default reasoning_effort "" (provider default), Gemini
-        bills internal thought tokens against max_tokens=64, the JSON payload
-        never lands, and the prose fallback stores the opening fence
-        ("```json") as the title. Enforce the module's documented
-        thinking-disabled contract at the call site.
+        Upstream disables thinking here (#91927); on the Nous Portal that disable is refused
+        with a 400 ("Reasoning is mandatory for this endpoint") and the catalog-refresh retry
+        never reaches the floor ladder, so every title call failed. Pin the absence.
         """
         captured_kwargs = {}
 
@@ -131,7 +129,7 @@ class TestGenerateTitle:
         with patch("agent.title_generator.call_llm", side_effect=mock_call_llm):
             assert generate_title("question") == "Reasoning Off"
 
-        assert captured_kwargs.get("reasoning_config") == {"enabled": False}
+        assert "reasoning_config" not in captured_kwargs or captured_kwargs["reasoning_config"] is None
 
     @pytest.mark.parametrize(
         ("content", "expected"),

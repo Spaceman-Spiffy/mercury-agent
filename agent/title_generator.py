@@ -521,13 +521,12 @@ def generate_title(
             # default-only reasoning models accept the first request (#72351).
             max_tokens=TITLE_MAX_TOKENS, temperature=None, timeout=timeout, main_runtime=main_runtime,
             extra_body={"response_format": _TITLE_RESPONSE_FORMAT},
-            # The module contract above promises thinking-disabled operation,
-            # but nothing enforced it: with the aux default reasoning_effort
-            # "" (provider default), Gemini enables internal thinking and
-            # bills thought tokens against max_tokens=64 — the JSON payload
-            # never lands, and the prose fallback stores the opening fence
-            # ("```json") as the session title (#91927).
-            reasoning_config={"enabled": False},
+            # MERCURY FORK: no reasoning_config. Upstream sends {"enabled": False} (#91927, Gemini
+            # thought tokens eating max_tokens=64); this fork's title slot runs on the Nous Portal,
+            # whose routes refuse the disable outright ("Reasoning is mandatory for this endpoint")
+            # and the catalog-refresh rung retries without the floor ladder, so every title call
+            # 400'd and sessions stayed untitled. Route default applies; TITLE_MAX_TOKENS=512 and
+            # _title_from_reasoning cover a model that thinks before the JSON lands.
         )
         message = response.choices[0].message
         title = _clean_title(_extract_title_text(message.content or "") or _title_from_reasoning(message))

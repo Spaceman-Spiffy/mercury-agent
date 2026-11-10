@@ -377,7 +377,7 @@ def test_launch_tui_exports_model_provider_and_toolsets(monkeypatch, main_mod):
     active_path_during_call = None
 
     monkeypatch.setattr(main_tui_launch, "_make_tui_argv",
-        lambda tui_dir, tui_dev: (["node", "dist/entry.js"], Path(".")),
+        lambda tui_dir, tui_dev, notices=None: (["node", "dist/entry.js"], Path(".")),
     )
 
     def fake_call(argv, cwd=None, env=None):
@@ -425,7 +425,7 @@ def test_launch_tui_prefers_launch_cwd_over_inherited_hermes_cwd(monkeypatch, ma
 
     captured = {}
     monkeypatch.setattr(main_tui_launch, "_make_tui_argv",
-        lambda tui_dir, tui_dev: (["node", "dist/entry.js"], Path(".")),
+        lambda tui_dir, tui_dev, notices=None: (["node", "dist/entry.js"], Path(".")),
     )
     monkeypatch.setattr(main_mod.subprocess, "call",
         lambda argv, cwd=None, env=None: captured.update({"env": env}) or 1,
@@ -452,7 +452,7 @@ def test_launch_tui_worktree_still_outranks_the_launch_cwd(monkeypatch, main_mod
     captured = {}
     monkeypatch.setattr(main_tui_launch, "_setup_tui_worktree", lambda: {"path": str(worktree)})
     monkeypatch.setattr(main_tui_launch, "_make_tui_argv",
-        lambda tui_dir, tui_dev: (["node", "dist/entry.js"], Path(".")),
+        lambda tui_dir, tui_dev, notices=None: (["node", "dist/entry.js"], Path(".")),
     )
     monkeypatch.setattr(main_mod.subprocess, "call",
         lambda argv, cwd=None, env=None: captured.update({"env": env}) or 1,
@@ -486,7 +486,7 @@ def test_launch_tui_local_session_starts_in_launch_dir_not_terminal_cwd(monkeypa
 
     captured = {}
     monkeypatch.setattr(main_tui_launch, "_make_tui_argv",
-        lambda tui_dir, tui_dev: (["node", "dist/entry.js"], Path(".")),
+        lambda tui_dir, tui_dev, notices=None: (["node", "dist/entry.js"], Path(".")),
     )
     monkeypatch.setattr(main_mod.subprocess, "call",
         lambda argv, cwd=None, env=None: captured.update({"env": env}) or 1,
@@ -513,7 +513,7 @@ def test_launch_tui_bypass_without_model_refuses_before_the_tui_starts(monkeypat
     monkeypatch.delenv("HERMES_MODEL", raising=False)
     monkeypatch.setenv("HERMES_PYTHON", sys.executable)  # never resolve a python over the real PATH
     monkeypatch.setattr(main_tui_launch, "_make_tui_argv",
-                        lambda tui_dir, tui_dev: (["node", "dist/entry.js"], Path(".")))
+                        lambda tui_dir, tui_dev, notices=None: (["node", "dist/entry.js"], Path(".")))
     spawned = []
     monkeypatch.setattr(main_mod.subprocess, "call", lambda argv, cwd=None, env=None: spawned.append(env) or 0)
     with pytest.raises(SystemExit) as exc:

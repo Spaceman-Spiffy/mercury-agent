@@ -38,6 +38,9 @@ def test_running_bot_desktop_beats_the_session_snapshot(monkeypatch):
 def test_stopped_bot_desktop_leaves_the_seat_env_alone(monkeypatch):
     _publish(monkeypatch, {})
     monkeypatch.setenv("DISPLAY", ":0")
+    # MERCURY FORK: hermetic under a desktop login session, which exports XAUTHORITY to the
+    # user manager and every unit under it; the assertion below is about what _make_run_env adds.
+    monkeypatch.delenv("XAUTHORITY", raising=False)
     env = _make_run_env({})
     assert env["DISPLAY"] == ":0"
     assert "XAUTHORITY" not in env or env.get("XAUTHORITY") == ""

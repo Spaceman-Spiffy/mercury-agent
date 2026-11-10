@@ -301,8 +301,19 @@ async def test_matrix_status_reports_current_matrix_room_scope():
     assert PROJECT_A_ROOM_ID not in result
 
 
+@pytest.fixture
+def unscoped_sessions(monkeypatch):
+    """MERCURY FORK: run with the production default (unscoped /resume, /sessions).
+
+    tests/conftest.py pins MERCURY_SESSION_SCOPING=1 so upstream's scoped tests pass; the
+    module-level switch is read at import, so the three fork-local tests below flip it back here.
+    """
+    import gateway.slash_commands_session as scs
+    monkeypatch.setattr(scs, "_MERCURY_UNSCOPED_SESSIONS", True)
+
+
 @pytest.mark.asyncio
-async def test_matrix_resume_crosses_rooms_by_default():
+async def test_matrix_resume_crosses_rooms_by_default(unscoped_sessions):
     # Fork-local behavior (fix/matrix-sessions-room-scope): Matrix room
     # isolation was removed so /resume reaches any session by title/ID
     # regardless of originating room. A session named in another room now
@@ -358,7 +369,7 @@ async def test_matrix_resume_quoted_title_same_room():
 
 
 @pytest.mark.asyncio
-async def test_matrix_resume_quoted_title_cross_room_allowed():
+async def test_matrix_resume_quoted_title_cross_room_allowed(unscoped_sessions):
     # Fork-local: cross-room resume is permitted; a quoted title from another
     # room resolves and switches rather than being blocked.
     source_a = _make_matrix_source(PROJECT_A_ROOM_ID, PROJECT_A_NAME, PROJECT_A_TOPIC)
@@ -391,7 +402,7 @@ async def test_matrix_resume_malformed_quote_returns_helpful_error():
 
 
 @pytest.mark.asyncio
-async def test_matrix_resume_lists_all_rooms_by_default():
+async def test_matrix_resume_lists_all_rooms_by_default(unscoped_sessions):
     # Fork-local: the default /resume list is no longer room-scoped; sessions
     # from every Matrix room are listed so any can be resumed by number/title.
     source_a = _make_matrix_source(PROJECT_A_ROOM_ID, PROJECT_A_NAME, PROJECT_A_TOPIC)

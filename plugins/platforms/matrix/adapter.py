@@ -2420,15 +2420,23 @@ class MatrixAdapter(BasePlatformAdapter):
                 # time — see MercuryTerm sessions-panel reordering request.
                 order_by_last_active=True,
             )
-            sessions = [
-                {
+            def _entry(r: dict) -> dict:
+                entry: dict[str, Any] = {
                     "id": str(r.get("id") or ""),
                     "title": str(r.get("title") or ""),
                     "source": str(r.get("source") or ""),
                 }
-                for r in rows
-                if r.get("id")
-            ]
+                # Ship the start INSTANT as an epoch beside the id. TUI-minted
+                # sessions carry ``local-<sha256>`` ids with no embedded
+                # timestamp, so the phone cannot derive a date from the id
+                # alone; an epoch is also zone-agnostic, so the phone renders
+                # it device-local with no coupling to this host's timezone.
+                started = r.get("started_at")
+                if isinstance(started, (int, float)) and started > 0:
+                    entry["started_at"] = float(started)
+                return entry
+
+            sessions = [_entry(r) for r in rows if r.get("id")]
             return {"v": _SESSIONS_PROTOCOL_VERSION, "sessions": sessions}
         except Exception as exc:
             logger.warning("Matrix: sessions-panel query failed: %s", exc)

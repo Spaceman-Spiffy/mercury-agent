@@ -800,3 +800,34 @@ def test_publication_uses_the_runtime_store_when_the_tree_records_none(tmp_path,
     assert len(written) == len(_launchers.WINDOWS_BIN_LAUNCHERS)
     for path in written:
         assert shlex.quote(str(python)) in Path(path).read_text(encoding="utf-8-sig")
+
+
+@pytest.mark.platforms("posix")
+def test_external_stamp_outranks_a_recorded_store_python(tmp_path, monkeypatch):
+    # Fork: PM provisions a store Python under an ``external`` install too (a
+    # pinned-Python bump on the next launch). The stamp still owns the
+    # interpreter, so a gateway restart must not rebind the unit and the
+    # launchers to a store Python that has no committed environment.
+    from hermes_cli import gateway as gw
+
+    repo, _home, _interpreter = fixture_tree(tmp_path, monkeypatch)
+    monkeypatch.setattr(gw, "PROJECT_ROOT", repo)
+    local = repo / ".hermes" / "bin"
+    launcher = str(local / "hermes")
+
+    # Control: a PM-owned tree with the same store publishes and persists the launcher.
+    assert _launchers.resolve_store_python(repo, publication=True) is not None
+    assert _launchers.installation_command(repo, ["gateway", "run"]) == [launcher, "gateway", "run"]
+    gw._prepare_service_launcher()
+    assert (local / "hermes").is_file()
+    shutil.rmtree(local)
+
+    (repo / "install-stamp.json").write_text(json.dumps({"updateMechanism": "external"}), encoding="utf-8")
+
+    assert _launchers.resolve_store_python(repo) is None
+    assert _launchers.resolve_store_python(repo, publication=True) is None
+    gw._prepare_service_launcher()
+    assert not local.exists()
+    assert gw.get_python_path() == sys.executable
+    command = _launchers.installation_command(repo, ["gateway", "run"], python=sys.executable)
+    assert command[0] == sys.executable and launcher not in command

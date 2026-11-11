@@ -114,6 +114,20 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
+def _externally_owned(repo_root: Path) -> bool:
+    """True when the install stamp leaves the interpreter to an external owner.
+
+    The stamp is the authority, not the store. PM provisions a store Python
+    under an ``external`` install too (a pinned-Python bump on the next
+    launch), and every "is there a store Python?" gate would then rebind the
+    gateway unit and launchers to an interpreter that has no committed
+    dependency environment: nothing fails until the next cold start.
+    """
+    from hermes_cli.steward import read_install_stamp
+
+    return read_install_stamp(Path(repo_root)).get("updateMechanism") == "external"
+
+
 def resolve_store_python(repo_root: Path, *, publication: bool = False) -> Path | None:
     """Read PM's committed Python tool, without adopting unrecorded bytes.
 
@@ -123,7 +137,11 @@ def resolve_store_python(repo_root: Path, *, publication: bool = False) -> Path 
     for the running process (an e2e fixture, a desktop toolchain) that a later
     scratch cleanup may delete, leaving the launcher to exit 127 forever
     (#131745). It still supplies the store when the tree records none.
+
+    An ``external`` install has no store Python, whatever the store records.
     """
+    if _externally_owned(repo_root):
+        return None
     if publication:
         own = _store_python(store_root(repo_root, honor_runtime_override=False))
         if own is not None:

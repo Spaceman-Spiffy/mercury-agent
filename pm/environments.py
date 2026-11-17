@@ -302,7 +302,43 @@ def committed_venv(project_root: Path) -> Path | None:
     Python mixes ABIs (compiled modules vanish). PM never deletes it: ``legacy_selection`` reads its
     site-packages again whenever this install has no dependency facts.
     """
+    if _external_in_tree_runtime(project_root):
+        return None
     return _recorded_venv(project_root) or payload_venv(project_root)
+
+
+def _external_in_tree_runtime(project_root: Path) -> bool:
+    """Fork guard: an externally managed checkout running on its in-tree venv keeps that venv.
+
+    ``updateMechanism: external`` in the install stamp says PM does not own this install's
+    dependencies: something else builds and updates the in-tree ``venv`` and the service units
+    exec its interpreter. PM still commits a generation whenever a sync runs (a dashboard plugin
+    toggle, ``pm repair``, ``hermes_ensure_env``), and that generation holds only what PM knows
+    to install. Selecting it at the next cold start replaces the venv's packages on ``sys.path``
+    and silently drops every runtime installed into the venv by hand, while the process and
+    every health check stay green. For such a process the record is not a selection: answer as
+    an install with nothing committed, so boot keeps the interpreter's own packages
+    (``_require_own_dependencies``) and a cron worker pins the tree only.
+
+    Only the in-tree venv's own interpreter qualifies. PM's store Python has no packages of its
+    own and still needs the committed generation, and ``selected_venv`` keeps reading the record,
+    so PM's bookkeeping (what a sync compares against) is unchanged.
+    """
+    import sys
+
+    if sys.prefix == sys.base_prefix:
+        return False
+    try:
+        root = Path(project_root).resolve()
+        prefix = Path(sys.prefix).resolve()
+        if prefix not in ((root / "venv").resolve(), (root / ".venv").resolve()):
+            return False
+        from pm.paths import install_stamp_path
+
+        data = json.loads(install_stamp_path(root).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("updateMechanism") == "external"
 
 
 def _recorded_venv(project_root: Path) -> Path | None:

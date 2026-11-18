@@ -323,10 +323,16 @@ def _external_in_tree_runtime(project_root: Path) -> bool:
     Only the in-tree venv's own interpreter qualifies. PM's store Python has no packages of its
     own and still needs the committed generation, and ``selected_venv`` keeps reading the record,
     so PM's bookkeeping (what a sync compares against) is unchanged.
+
+    Nor does that interpreter qualify when it was started with ``-S``: it has loaded none of the
+    venv's packages, so there is nothing to keep, and answering "nothing committed" would leave
+    it with no packages at all. ``-I -S`` is the bare-child contract of the update path
+    (``hermes_cli.update_completion`` boots its child that way and activates the committed
+    generation inside it), and it is how the suite stands in for the store Python.
     """
     import sys
 
-    if sys.prefix == sys.base_prefix:
+    if sys.prefix == sys.base_prefix or sys.flags.no_site:
         return False
     try:
         root = Path(project_root).resolve()

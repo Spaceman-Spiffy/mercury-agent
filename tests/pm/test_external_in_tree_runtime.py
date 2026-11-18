@@ -6,7 +6,9 @@ selecting it at the next cold start drops every runtime installed into the in-tr
 """
 import json
 import os
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -125,3 +127,43 @@ def test_store_python_still_selects_the_generation(install, tmp_path):
     boot_from(tmp_path / "store-python", base=tmp_path / "store-python")
 
     assert committed_venv(repo) == generation
+
+
+# A real child, so the flag under test is the interpreter's own ``sys.flags.no_site``. It takes
+# the in-tree venv's identity (argv 2), then asks the two questions boot asks.
+_CHILD = """
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[4])
+sys.prefix, sys.base_prefix = sys.argv[2], sys.argv[3]
+from pm.environments import activate_dependencies, committed_venv
+repo = Path(sys.argv[1])
+selected = committed_venv(repo)
+activate_dependencies(repo)
+print(json.dumps({"no_site": sys.flags.no_site, "committed": str(selected) if selected else None,
+                  "generation_on_path": sys.argv[5] in sys.path}))
+"""
+
+
+@pytest.mark.parametrize("flags,selects", [
+    ((), False), (("-I",), False), (("-S",), True), (("-I", "-S"), True),
+])
+def test_only_an_interpreter_that_loaded_the_venv_keeps_it(install, tmp_path, flags, selects):
+    """``-S`` loads none of the venv's packages, so there is nothing to keep: that child selects
+    the committed generation, as the update path's bare ``-I -S`` children expect. ``-I`` alone
+    (the gateway unit's flag) still loads them and keeps the venv."""
+    from pm.environments import site_packages
+
+    repo, generation, in_tree_venv, stamp, _boot_from = install
+    stamp(EXTERNAL)
+    checkout = Path(__file__).resolve().parents[2]
+    child = subprocess.run(
+        [sys.executable, *flags, "-c", _CHILD, str(repo), str(in_tree_venv()),
+         str(tmp_path / "base-python"), str(checkout), str(site_packages(generation))],
+        env=dict(os.environ), capture_output=True, text=True, timeout=60, check=False)
+
+    assert child.returncode == 0, child.stderr
+    result = json.loads(child.stdout.splitlines()[-1])
+    assert result["no_site"] == int("-S" in flags)
+    assert result["committed"] == (str(generation) if selects else None)
+    assert result["generation_on_path"] is selects

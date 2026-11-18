@@ -45,6 +45,57 @@ GLYPH_FLAGS: dict[str, str] = {
     "\u2442": "FORK",  # ⑂ session branched
     "\u270f": "TITLE", # ✏ session title set
     "\u2796": "DEL",   # ➖ removed ("-" would read as a markdown list bullet)
+    "\U0001f5d1": "DEL",   # 🗑 lost-turn discard notice (locales/en.yaml sessions
+                           #    discard `done`; Peter caught on glass 2026-11-17 —
+                           #    unmapped, it classed m.text and wore CC)
+    "\u23f9": "STOP",      # ⏹ interrupted-while-waiting-for-quota-reset notice
+                           #    (Peter, glass 2026-11-17; emitter not located in
+                           #    tree — mapped on the glyph, which is all the
+                           #    classifier reads). ⏸→HOLD is paused; ⏹ is terminal.
+    # -- unmapped-marker sweep of locales/en.yaml (Peter, 2026-11-17: "fix the
+    #    others you found"). Same defect as 🗑/⏹: unmapped → m.text → CC header.
+    "\u231b": "TIMEOUT",   # ⌛ approval timed out / expired (command NOT run).
+                           #    Status notice, not a solicitation — telemetry.
+    "\u25d0": "RESET",     # ◐ auto-reset after stop (sibling of ✨ NEW)
+    "\U0001f6d1": "HOLD",  # 🛑 kanban review-BLOCK / routed-to-TRIAGE (task held)
+    "\u2716": "NOGO",      # ✖ kanban worker crashed (matches ✗/✕)
+    "\u21b7": "KEEP",      # ↷ rollback kept your hand-edits / oversize files
+    # -- held markers, ruled GO by Peter 2026-11-17 ("fix the held markers as
+    #    well"). Status class → telemetry; solicitation class → REQ.
+    "\u21b6": "UNDO",      # ↶ files changed in undone turns (also tui_gateway)
+    "\u21ba": "REWIND",    # ↺ transcript rewind / edit-prompt notices
+    "\u23ed": "SKIP",      # ⏭ skipped / not saved (matches ⏩)
+    "\u25cf": "REC",       # ● voice recording
+    "\u25c9": "VOX",       # ◉ STT / transcribing (matches 🎙)
+    "\U0001f3a4": "VOX",   # 🎤 voice interjection / voice-mode hint
+    "\U0001f9f5": "THREAD",  # 🧵 thread created / handoff seed
+    "\U0001f914": "/",     # 🤔 still thinking (note class, matches 💭)
+    "\U0001f973": "GO",    # 🥳 done (matches ✅)
+    "\U0001f512": "GO-A",  # 🔒 always-approve ack/label (matches ♾)
+    "\u2624": "REQ",       # ☤ SOLICITATION — "Update needs your input". COST:
+                           #    glyph-level map, so "☤ Starting Hermes update…"
+                           #    (a status line) also wears REQ. Split by editing
+                           #    the en.yaml `starting` header if that bites.
+    "\U0001f511": "REQ",   # 🔑 SOLICITATION — "Skill Setup Required"
+    # -- sweep finds, same day. Reachable via _emit_status /
+    #    _buffer_diagnostic_status (gateway bubble) or the tool registry.
+    "\U0001f4a1": "/",     # 💡 first-time tips (agent/onboarding.py), tip_tool
+    "\U0001f4e6": "**",    # 📦 pre-API / preflight compression (matches 🗜)
+    "\U0001f4a4": "**",    # 💤 resumed after idle — compacting
+    "\U0001f4d0": "SIZE",  # 📐 image/payload size recovery
+    "\U0001f6ab": "NOGO",  # 🚫 account not entitled (matches ⛔)
+    "\U0001f501": "*",     # 🔁 repetition loop caution
+    "\U0001f6e1": "GATE",  # 🛡 content-filter stream terminated; admin toolset
+    "\u23ea": "UNDO",      # ⏪ rolling back to last complete turn
+    "\u2696": "RVW",       # ⚖ review completed synchronously (matches ⚗)
+    "\U0001f39b": "SETUP", # 🎛 setup_beat_tool
+    "\U0001f516": "MARK",  # 🔖 annotate_preview_tool
+    "\U0001f9ed": "TOUR",  # 🧭 tour_tool
+    "\U0001f5b1": "DESK",  # 🖱 computer_use / drive_preview
+    "\U0001f4de": "MEET",  # 📞 google_meet join
+    "\U0001f5e3": "MEET",  # 🗣 google_meet say
+    "\U0001f44b": "MEET",  # 👋 google_meet leave
+    "\U0001f7e2": "MEET",  # 🟢 google_meet status
     "\U0001f3ad": "PERS",  # 🎭 personality
     "\U0001f464": "PROF",  # 👤 profile
     "\U0001f4c2": "FILE",  # 📂 profile home dir
